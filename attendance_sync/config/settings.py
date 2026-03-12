@@ -44,7 +44,7 @@ for entry in _DEVICE_NAMES_RAW.split(","):
         DEVICE_NAMES[ip.strip()] = name.strip()
 
 # ── Polling ──────────────────────────────────────────────────────────────────
-POLL_INTERVAL: int = int(os.getenv("POLL_INTERVAL", "10"))          # seconds
+POLL_INTERVAL: int = int(os.getenv("POLL_INTERVAL", "600"))         # seconds (10 mins)
 DEDUP_WINDOW: int = int(os.getenv("DEDUP_WINDOW", "30"))            # seconds
 FIRST_RUN_LOOKBACK_HOURS: int = int(os.getenv("FIRST_RUN_LOOKBACK_HOURS", "24"))
 
