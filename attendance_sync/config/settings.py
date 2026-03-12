@@ -44,6 +44,7 @@ for entry in _DEVICE_NAMES_RAW.split(","):
 # ── Polling ──────────────────────────────────────────────────────────────────
 POLL_INTERVAL: int = int(os.getenv("POLL_INTERVAL", "10"))          # seconds
 DEDUP_WINDOW: int = int(os.getenv("DEDUP_WINDOW", "30"))            # seconds
+FIRST_RUN_LOOKBACK_HOURS: int = int(os.getenv("FIRST_RUN_LOOKBACK_HOURS", "24"))
 
 # ── Hikvision event filter ────────────────────────────────────────────────────
 EVENT_MAJOR: int = int(os.getenv("EVENT_MAJOR", "5"))

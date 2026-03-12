@@ -117,9 +117,9 @@ def main() -> None:
         retry_backoff_base=settings.RETRY_BACKOFF_BASE,
     )
 
-    # On first run, look back one poll interval to avoid missing recent events
+    # On first run, look back to avoid missing recent events
     last_poll: datetime = datetime.now(timezone.utc) - timedelta(
-        seconds=settings.POLL_INTERVAL
+        hours=settings.FIRST_RUN_LOOKBACK_HOURS
     )
 
     while _running:
