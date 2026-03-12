@@ -31,6 +31,8 @@ if not DEVICE_IPS:
 
 DEVICE_USER: str = _require("DEVICE_USER")
 DEVICE_PASS: str = _require("DEVICE_PASS")
+HIKVISION_USE_HTTPS: bool = os.getenv("HIKVISION_USE_HTTPS", "true").lower() == "true"
+HIKVISION_VERIFY_SSL: bool = os.getenv("HIKVISION_VERIFY_SSL", "false").lower() == "true"
 
 # ── Device Friendly Names ────────────────────────────────────────────────────
 # Map IP addresses to friendly names (e.g. 10.10.10.131:BIOMETRIC-01)

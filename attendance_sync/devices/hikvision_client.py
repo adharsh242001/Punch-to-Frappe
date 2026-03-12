@@ -14,25 +14,12 @@ from typing import Any, Generator
 
 import requests
 from requests.auth import HTTPDigestAuth
+from config import settings
 
 logger = logging.getLogger(__name__)
 
 # How many records to request per page from the device
 _PAGE_SIZE = 50
-
-# XML body template for the event query
-_QUERY_TMPL = """\
-<?xml version="1.0" encoding="UTF-8"?>
-<AcsEventCond>
-    <searchID>{search_id}</searchID>
-    <searchResultPosition>{position}</searchResultPosition>
-    <maxResults>{max_results}</maxResults>
-    <major>{major}</major>
-    <minor>{minor}</minor>
-    <startTime>{start_time}</startTime>
-    <endTime>{end_time}</endTime>
-</AcsEventCond>
-"""
 
 
 class HikvisionClient:
@@ -65,11 +52,17 @@ class HikvisionClient:
         self.minor = minor
         self.timeout = timeout
 
-        self._base_url = f"http://{device_ip}"
+        protocol = "https" if settings.HIKVISION_USE_HTTPS else "http"
+        self._base_url = f"{protocol}://{device_ip}"
         self._auth = HTTPDigestAuth(username, password)
         self._session = requests.Session()
         self._session.auth = self._auth
-        self._session.headers.update({"Content-Type": "application/xml"})
+        self._session.verify = settings.HIKVISION_VERIFY_SSL
+        
+        # Suppress insecure request warnings if SSL verification is disabled
+        if not settings.HIKVISION_VERIFY_SSL:
+            import urllib3  # noqa: PLC0415
+            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
     # ── public interface ──────────────────────────────────────────────────────
 
@@ -88,20 +81,24 @@ class HikvisionClient:
         position = 0
 
         while True:
-            xml_body = _QUERY_TMPL.format(
-                search_id=search_id,
-                position=position,
-                max_results=_PAGE_SIZE,
-                major=self.major,
-                minor=self.minor,
-                start_time=self._fmt_time(start_time),
-                end_time=self._fmt_time(end_time),
-            )
+            # Match the working curl's JSON structure
+            payload = {
+                "AcsEventCond": {
+                    "searchID": search_id,
+                    "searchResultPosition": position,
+                    "maxResults": _PAGE_SIZE,
+                    "major": self.major,
+                    "minor": self.minor,
+                    "startTime": self._fmt_time(start_time),
+                    "endTime": self._fmt_time(end_time),
+                }
+            }
 
             try:
+                # Add ?format=json to the URL as seen in the working curl
                 resp = self._session.post(
-                    f"{self._base_url}/ISAPI/AccessControl/AcsEvent",
-                    data=xml_body.encode("utf-8"),
+                    f"{self._base_url}/ISAPI/AccessControl/AcsEvent?format=json",
+                    json=payload,
                     timeout=self.timeout,
                 )
                 resp.raise_for_status()
