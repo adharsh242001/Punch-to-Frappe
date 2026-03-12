@@ -21,16 +21,32 @@ def _require(name: str) -> str:
 
 
 # ── Hikvision devices ────────────────────────────────────────────────────────
-DEVICE_IPS: list[str] = [
-    ip.strip()
-    for ip in os.getenv("DEVICES", "").split(",")
-    if ip.strip()
-]
-if not DEVICE_IPS:
+# List of IPs or "ip:user:pass" strings
+_DEVICES_RAW = os.getenv("DEVICES", "").split(",")
+DEVICE_CONFIGS: list[dict[str, str]] = []
+
+for entry in _DEVICES_RAW:
+    parts = [p.strip() for p in entry.split(":") if p.strip()]
+    if not parts:
+        continue
+    
+    config = {"ip": parts[0]}
+    if len(parts) >= 3:
+        config["user"] = parts[1]
+        config["pass"] = parts[2]
+    else:
+        # Fallback to global credentials
+        config["user"] = os.getenv("DEVICE_USER", "")
+        config["pass"] = os.getenv("DEVICE_PASS", "")
+    
+    DEVICE_CONFIGS.append(config)
+
+if not DEVICE_CONFIGS:
     raise EnvironmentError("DEVICES must list at least one IP in .env")
 
-DEVICE_USER: str = _require("DEVICE_USER")
-DEVICE_PASS: str = _require("DEVICE_PASS")
+DEVICE_IPS = [c["ip"] for c in DEVICE_CONFIGS]
+DEVICE_USER: str = os.getenv("DEVICE_USER", "")
+DEVICE_PASS: str = os.getenv("DEVICE_PASS", "")
 HIKVISION_USE_HTTPS: bool = os.getenv("HIKVISION_USE_HTTPS", "true").lower() == "true"
 HIKVISION_VERIFY_SSL: bool = os.getenv("HIKVISION_VERIFY_SSL", "false").lower() == "true"
 

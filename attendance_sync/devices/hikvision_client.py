@@ -102,12 +102,30 @@ class HikvisionClient:
                     timeout=self.timeout,
                 )
                 resp.raise_for_status()
-            except requests.exceptions.ConnectionError as exc:
-                logger.error("[%s] Connection failed: %s", self.device_ip, exc)
-                return
-            except requests.exceptions.Timeout:
-                logger.error("[%s] Request timed out", self.device_ip)
-                return
+            except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as exc:
+                # If HTTPS failed, try falling back to HTTP (or vice versa)
+                alt_protocol = "http" if self._base_url.startswith("https") else "https"
+                alt_url = f"{alt_protocol}://{self.device_ip}"
+                
+                logger.warning(
+                    "[%s] %s failing – trying fallback to %s…",
+                    self.device_ip,
+                    self._base_url.split(":")[0].upper(),
+                    alt_protocol.upper(),
+                )
+                
+                try:
+                    resp = self._session.post(
+                        f"{alt_url}/ISAPI/AccessControl/AcsEvent?format=json",
+                        json=payload,
+                        timeout=self.timeout,
+                    )
+                    resp.raise_for_status()
+                    # Success on fallback! Update base_url for future polls this session
+                    self._base_url = alt_url
+                except Exception as fallback_exc:
+                    logger.error("[%s] Connection failed on both protocols: %s", self.device_ip, fallback_exc)
+                    return
             except requests.exceptions.HTTPError as exc:
                 logger.error(
                     "[%s] HTTP error %s: %s",

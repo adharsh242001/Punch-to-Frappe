@@ -59,16 +59,16 @@ def _handle_signal(signum, _frame) -> None:
 # ── core poll loop ────────────────────────────────────────────────────────────
 
 def run_poll_cycle(
-    device_ip: str,
+    device_config: dict[str, str],
     start_time: datetime,
     end_time: datetime,
     processor: EventProcessor,
 ) -> None:
     """Fetch events from one device and run each through the processor."""
     client = HikvisionClient(
-        device_ip=device_ip,
-        username=settings.DEVICE_USER,
-        password=settings.DEVICE_PASS,
+        device_ip=device_config["ip"],
+        username=device_config["user"],
+        password=device_config["pass"],
         major=settings.EVENT_MAJOR,
         minor=settings.EVENT_MINOR,
     )
@@ -133,11 +133,11 @@ def main() -> None:
             end_time.isoformat(),
         )
 
-        for device_ip in settings.DEVICE_IPS:
+        for device_config in settings.DEVICE_CONFIGS:
             try:
-                run_poll_cycle(device_ip, start_time, end_time, processor)
+                run_poll_cycle(device_config, start_time, end_time, processor)
             except Exception:  # noqa: BLE001
-                logger.exception("Unexpected error polling device %s", device_ip)
+                logger.exception("Unexpected error polling device %s", device_config["ip"])
 
         # Process any pending retries
         try:
