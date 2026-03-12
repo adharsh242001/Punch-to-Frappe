@@ -32,6 +32,15 @@ if not DEVICE_IPS:
 DEVICE_USER: str = _require("DEVICE_USER")
 DEVICE_PASS: str = _require("DEVICE_PASS")
 
+# ── Device Friendly Names ────────────────────────────────────────────────────
+# Map IP addresses to friendly names (e.g. 10.10.10.131:BIOMETRIC-01)
+_DEVICE_NAMES_RAW = os.getenv("DEVICE_NAMES", "")
+DEVICE_NAMES: dict[str, str] = {}
+for entry in _DEVICE_NAMES_RAW.split(","):
+    if ":" in entry:
+        ip, name = entry.split(":", 1)
+        DEVICE_NAMES[ip.strip()] = name.strip()
+
 # ── Polling ──────────────────────────────────────────────────────────────────
 POLL_INTERVAL: int = int(os.getenv("POLL_INTERVAL", "10"))          # seconds
 DEDUP_WINDOW: int = int(os.getenv("DEDUP_WINDOW", "30"))            # seconds
@@ -44,6 +53,11 @@ EVENT_MINOR: int = int(os.getenv("EVENT_MINOR", "75"))
 HRMS_URL: str = _require("HRMS_URL").rstrip("/")
 HRMS_API_KEY: str = _require("HRMS_API_KEY")
 HRMS_API_SECRET: str = _require("HRMS_API_SECRET")
+
+# ── Default Check-in Metadata ────────────────────────────────────────────────
+DEFAULT_LOG_TYPE: str = os.getenv("DEFAULT_LOG_TYPE", "IN")
+LATITUDE: str | None = os.getenv("LATITUDE")
+LONGITUDE: str | None = os.getenv("LONGITUDE")
 
 # ── Employee map ──────────────────────────────────────────────────────────────
 _MAP_PATH = Path(os.getenv("EMPLOYEE_MAP", str(_ROOT / "employee_map.json")))

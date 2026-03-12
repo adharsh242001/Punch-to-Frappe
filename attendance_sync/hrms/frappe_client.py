@@ -53,7 +53,10 @@ class FrappeClient:
         self,
         employee: str,
         event_time: str,
-        device_ip: str,
+        device_id: str,
+        log_type: str | None = None,
+        latitude: str | float | None = None,
+        longitude: str | float | None = None,
     ) -> dict[str, Any]:
         """
         Create an Employee Checkin record in Frappe HRMS.
@@ -64,8 +67,12 @@ class FrappeClient:
             Frappe employee ID (e.g. "296").
         event_time:
             Formatted timestamp string "YYYY-MM-DD HH:MM:SS".
-        device_ip:
-            IP address of the source device (stored as device_id).
+        device_id:
+            Friendly name or IP of the source device.
+        log_type:
+            "IN" or "OUT".
+        latitude / longitude:
+            Geographical coordinates.
 
         Returns
         -------
@@ -80,8 +87,14 @@ class FrappeClient:
         payload = {
             "employee": employee,
             "time": event_time,
-            "device_id": device_ip,
+            "device_id": device_id,
         }
+        if log_type:
+            payload["log_type"] = log_type
+        if latitude:
+            payload["latitude"] = latitude
+        if longitude:
+            payload["longitude"] = longitude
 
         try:
             resp = self._session.post(

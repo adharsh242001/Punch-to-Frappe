@@ -153,6 +153,9 @@ class EventProcessor:
             employee_no=employee_no,
             event_dt=event_dt,
             raw_time=raw_time,
+            log_type=settings.DEFAULT_LOG_TYPE,
+            latitude=settings.LATITUDE,
+            longitude=settings.LONGITUDE,
         )
 
     def process_retries(self) -> None:
@@ -173,6 +176,9 @@ class EventProcessor:
                 raw_time=row["event_time"],
                 retry_row_id=row["id"],
                 attempt=row["attempts"],
+                log_type=settings.DEFAULT_LOG_TYPE,
+                latitude=settings.LATITUDE,
+                longitude=settings.LONGITUDE,
             )
 
         # Clean up permanently dead entries
@@ -194,12 +200,21 @@ class EventProcessor:
         raw_time: str,
         retry_row_id: int | None = None,
         attempt: int = 0,
+        log_type: str | None = None,
+        latitude: str | float | None = None,
+        longitude: str | float | None = None,
     ) -> None:
+        # Resolve friendly name if configured, otherwise use IP
+        device_id = settings.DEVICE_NAMES.get(device_ip, device_ip)
+
         try:
             self._frappe.push_checkin(
                 employee=hrms_id,
                 event_time=frappe_time,
-                device_ip=device_ip,
+                device_id=device_id,
+                log_type=log_type,
+                latitude=latitude,
+                longitude=longitude,
             )
             logger.info(
                 "Checkin pushed: employee=%s time=%s device=%s serial=%s",
