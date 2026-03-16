@@ -77,10 +77,27 @@ class EventProcessor:
     ) -> None:
         self._frappe = frappe_client
         self._store = store
-        self._employee_map = employee_map
+        # Normalize the map: lowercase keys and strip leading zeros from numeric keys
+        self._employee_map = {
+            self._normalize_id(k): v for k, v in employee_map.items()
+        }
         self._dedup_window = dedup_window
         self._retry_max = retry_max_attempts
         self._retry_base = retry_backoff_base
+
+    @staticmethod
+    def _normalize_id(emp_id: str) -> str:
+        """
+        Normalize ID for matching:
+        1. Strip whitespace and lowercase.
+        2. Strip leading zeros if the result is numeric.
+        """
+        if not emp_id:
+            return ""
+        s = emp_id.strip().lower()
+        if s.isdigit():
+            return s.lstrip("0") or "0"
+        return s
 
     # ── main entry point ──────────────────────────────────────────────────────
 
@@ -121,14 +138,20 @@ class EventProcessor:
             return
 
         # 3. Map device employee number → HRMS employee ID
-        hrms_id = self._employee_map.get(employee_no)
+        norm_id = self._normalize_id(employee_no)
+        hrms_id = self._employee_map.get(norm_id)
+
         if hrms_id is None:
-            logger.warning(
-                "No HRMS mapping for employee=%s (%s) device=%s – skipping",
-                employee_no,
-                name,
-                device_ip,
-            )
+            # If the ID is empty, it's likely a non-event or bypass; log as DEBUG
+            if not norm_id:
+                logger.debug("Event missing employee ID (serialNo=%s) – skipping", serial_no)
+            else:
+                logger.warning(
+                    "No HRMS mapping for employee=%s (%s) device=%s – skipping",
+                    employee_no,
+                    name,
+                    device_ip,
+                )
             return
 
         # 4. 30-second window dedup per employee
