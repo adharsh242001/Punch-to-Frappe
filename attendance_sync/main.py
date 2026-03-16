@@ -81,7 +81,7 @@ def run_poll_cycle(
     finally:
         client.close()
 
-    logger.debug("[%s] Fetched %d event(s) in this cycle.", device_ip, event_count)
+    logger.debug("[%s] Fetched %d event(s) in this cycle.", device_config["ip"], event_count)
 
 
 def main() -> None:
