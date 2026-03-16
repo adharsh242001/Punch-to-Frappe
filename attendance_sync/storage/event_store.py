@@ -109,7 +109,11 @@ class EventStore:
         if row is None:
             return False
         last = datetime.fromisoformat(row["punch_time"])
-        delta = abs((punch_time - last).total_seconds())
+        # To avoid "TypeError: can't subtract offset-naive and offset-aware datetimes",
+        # strip tzinfo if they mismatch, or just unconditionally strip it since both are local.
+        p_naive = punch_time.replace(tzinfo=None)
+        l_naive = last.replace(tzinfo=None)
+        delta = abs((p_naive - l_naive).total_seconds())
         return delta < window_seconds
 
     def update_last_punch(self, employee_id: str, punch_time: datetime) -> None:
