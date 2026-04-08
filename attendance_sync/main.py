@@ -84,21 +84,8 @@ def run_poll_cycle(
     logger.debug("[%s] Fetched %d event(s) in this cycle.", device_config["ip"], event_count)
 
 
-def main() -> None:
-    _setup_logging()
-    logger.info("=== Attendance Sync Service starting ===")
-    logger.info(
-        "Devices: %s | Poll interval: %ds | Dedup window: %ds",
-        ", ".join(settings.DEVICE_IPS),
-        settings.POLL_INTERVAL,
-        settings.DEDUP_WINDOW,
-    )
-
-    # Graceful-shutdown hooks
-    signal.signal(signal.SIGINT, _handle_signal)
-    signal.signal(signal.SIGTERM, _handle_signal)
-
-    # Shared infrastructure
+def create_processor() -> tuple[FrappeClient, EventProcessor]:
+    """Build the shared Frappe/EventProcessor infrastructure."""
     store = EventStore(settings.STORE_PATH)
     frappe = FrappeClient(
         base_url=settings.HRMS_URL,
@@ -116,6 +103,58 @@ def main() -> None:
         retry_max_attempts=settings.RETRY_MAX_ATTEMPTS,
         retry_backoff_base=settings.RETRY_BACKOFF_BASE,
     )
+    return frappe, processor
+
+
+def run_manual_sync(start_time: datetime, end_time: datetime) -> None:
+    """Run a one-off sync for the requested date range."""
+    if start_time >= end_time:
+        raise ValueError("start_time must be earlier than end_time.")
+
+    _setup_logging()
+    logger.info(
+        "=== Manual attendance sync starting: %s -> %s ===",
+        start_time.isoformat(),
+        end_time.isoformat(),
+    )
+
+    frappe, processor = create_processor()
+    try:
+        for device_config in settings.DEVICE_CONFIGS:
+            try:
+                run_poll_cycle(device_config, start_time, end_time, processor)
+            except Exception:  # noqa: BLE001
+                logger.exception(
+                    "Unexpected error during manual sync for device %s",
+                    device_config["ip"],
+                )
+
+        try:
+            processor.process_retries()
+        except Exception:  # noqa: BLE001
+            logger.exception("Unexpected error processing retry queue after manual sync")
+    finally:
+        frappe.close()
+
+    logger.info("=== Manual attendance sync complete ===")
+
+
+def main() -> None:
+    _setup_logging()
+    logger.info("=== Attendance Sync Service starting ===")
+    logger.info(
+        "Devices: %s | Poll interval: %ds | Dedup window: %ds",
+        ", ".join(settings.DEVICE_IPS),
+        settings.POLL_INTERVAL,
+        settings.DEDUP_WINDOW,
+    )
+
+    # Graceful-shutdown hooks
+    signal.signal(signal.SIGINT, _handle_signal)
+    signal.signal(signal.SIGTERM, _handle_signal)
+
+    # Shared infrastructure
+    frappe, processor = create_processor()
 
     # On first run, look back to avoid missing recent events
     last_poll: datetime = datetime.now(timezone.utc) - timedelta(
