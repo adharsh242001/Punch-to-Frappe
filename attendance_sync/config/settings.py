@@ -66,9 +66,9 @@ EVENT_MAJOR: int = int(os.getenv("EVENT_MAJOR", "5"))
 EVENT_MINOR: int = int(os.getenv("EVENT_MINOR", "75"))
 
 # ── Frappe HRMS ───────────────────────────────────────────────────────────────
-HRMS_URL: str = _require("HRMS_URL").rstrip("/")
-HRMS_API_KEY: str = _require("HRMS_API_KEY")
-HRMS_API_SECRET: str = _require("HRMS_API_SECRET")
+HRMS_URL: str = os.getenv("HRMS_URL", "").rstrip("/")
+HRMS_API_KEY: str = os.getenv("HRMS_API_KEY", "")
+HRMS_API_SECRET: str = os.getenv("HRMS_API_SECRET", "")
 
 # ── Default Check-in Metadata ────────────────────────────────────────────────
 DEFAULT_LOG_TYPE: str = os.getenv("DEFAULT_LOG_TYPE", "IN")

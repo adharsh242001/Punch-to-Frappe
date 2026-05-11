@@ -7,6 +7,7 @@ It currently supports three workflows:
 - Continuous sync service: keeps polling devices and pushes new checkins to Frappe.
 - Manual date-range sync: backfills a specific period into Frappe.
 - CSV export: downloads punch records from devices into a CSV for checking, mapping, or audit.
+- Distributed edge/server sync: PC A and PC B send signed punch batches to a central server, and only the server pushes to Frappe.
 
 ## How It Works
 
@@ -28,12 +29,15 @@ It currently supports three workflows:
 ```text
 attendance_sync/
   main.py                       Continuous service and shared sync logic
+  server.py                     Central HTTP server for PC A / PC B uploads
+  edge_agent.py                 Edge PC agent that polls local devices and uploads batches
   manual_sync.py                One-off date range sync into Frappe
   config/settings.py            .env loading and runtime settings
   devices/hikvision_client.py   Hikvision ISAPI client
   hrms/frappe_client.py         Frappe Employee Checkin API client
   processors/event_processor.py Employee mapping, duplicate checks, retries
   storage/event_store.py        SQLite store for processed events and retries
+  transport/security.py         HMAC request signing helpers
 
 export_punch_records.py         Export device punches to CSV
 employee_map.json               Device employee number to Frappe employee ID map
@@ -210,6 +214,98 @@ What happens while it runs:
 
 Stop it with `Ctrl+C`. The script handles shutdown cleanly after the current operation.
 
+## Running Distributed Edge/Server Sync
+
+Use this when the punch devices are split across two PCs and one central machine should be the only machine that pushes to Frappe.
+
+Recommended layout:
+
+- PC A: can reach its own Hikvision devices.
+- PC B: can reach its own Hikvision devices.
+- Central server: can receive HTTP from PC A and PC B, and can reach the Frappe site.
+
+Security model:
+
+- Each edge PC signs every upload with HMAC-SHA256.
+- The central server only accepts node IDs and secrets listed in `SERVER_NODE_KEYS`.
+- For best transport safety, run this over HTTPS, a VPN, Tailscale, ZeroTier, or a private LAN. HMAC proves the sender and prevents tampering, but plain HTTP does not encrypt the punch data.
+
+### Central Server Setup
+
+On the central machine, configure Frappe credentials, employee mapping, storage, and the accepted edge nodes:
+
+```env
+HRMS_URL=https://your-frappe-site.example.com
+HRMS_API_KEY=your_api_key
+HRMS_API_SECRET=your_api_secret
+EMPLOYEE_MAP=employee_map.json
+STORE_PATH=data/events.db
+
+SERVER_HOST=0.0.0.0
+SERVER_PORT=8080
+SERVER_NODE_KEYS=pc-a:long_random_secret_for_a,pc-b:long_random_secret_for_b
+POLL_INTERVAL=600
+```
+
+Start the central server:
+
+```powershell
+python attendance_sync\server.py
+```
+
+What it does:
+
+- Receives `POST /events` batches from PC A and PC B.
+- Stores incoming events in `data/events.db`.
+- Every `POLL_INTERVAL` seconds, pushes queued events to Frappe.
+- Uses the same employee mapping, duplicate checks, and retry queue as the existing sync service.
+
+Health check:
+
+```powershell
+Invoke-RestMethod http://central-server-ip:8080/health
+```
+
+### PC A / PC B Edge Setup
+
+On each edge PC, configure only the devices reachable from that PC plus the central server URL.
+
+PC A example:
+
+```env
+DEVICES=10.10.10.166,10.10.10.128
+DEVICE_USER=admin
+DEVICE_PASS=your_device_password
+
+SYNC_SERVER_URL=http://central-server-ip:8080
+EDGE_NODE_ID=pc-a
+EDGE_NODE_SECRET=long_random_secret_for_a
+POLL_INTERVAL=600
+FIRST_RUN_LOOKBACK_HOURS=24
+```
+
+PC B example:
+
+```env
+DEVICES=10.10.20.50,10.10.20.51
+DEVICE_USER=admin
+DEVICE_PASS=your_device_password
+
+SYNC_SERVER_URL=http://central-server-ip:8080
+EDGE_NODE_ID=pc-b
+EDGE_NODE_SECRET=long_random_secret_for_b
+POLL_INTERVAL=600
+FIRST_RUN_LOOKBACK_HOURS=24
+```
+
+Start the edge agent on each PC:
+
+```powershell
+python attendance_sync\edge_agent.py
+```
+
+If an edge PC cannot reach the central server, it does not advance its poll window; on the next cycle it fetches that same time range again and resends. The central server de-duplicates received batches, so repeat sends are safe.
+
 ## Running Manual Sync
 
 Use manual sync when you need to backfill a known date/time range into Frappe:
@@ -272,6 +368,7 @@ The database has three responsibilities:
 - `processed_events`: stores Hikvision `serialNo` values that have already been handled.
 - `last_punch`: stores each employee's last punch time for duplicate-window checks.
 - `retry_queue`: stores checkins that failed because of temporary Frappe/API problems.
+- `inbound_events`: stores signed batches received from edge PCs before the central server pushes them to Frappe.
 
 Do not delete `data/events.db` unless you intentionally want the sync to forget what it already processed. If you delete it, old device events inside the queried date range may be pushed again unless Frappe rejects them as duplicates.
 

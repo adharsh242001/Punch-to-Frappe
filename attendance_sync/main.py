@@ -86,6 +86,13 @@ def run_poll_cycle(
 
 def create_processor() -> tuple[FrappeClient, EventProcessor]:
     """Build the shared Frappe/EventProcessor infrastructure."""
+    if not settings.HRMS_URL:
+        raise EnvironmentError("HRMS_URL is required when pushing to Frappe.")
+    if not settings.HRMS_API_KEY:
+        raise EnvironmentError("HRMS_API_KEY is required when pushing to Frappe.")
+    if not settings.HRMS_API_SECRET:
+        raise EnvironmentError("HRMS_API_SECRET is required when pushing to Frappe.")
+
     store = EventStore(settings.STORE_PATH)
     frappe = FrappeClient(
         base_url=settings.HRMS_URL,
