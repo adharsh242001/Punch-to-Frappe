@@ -80,30 +80,29 @@ def fetch_device_events(start_time: datetime, end_time: datetime) -> list[dict[s
 
 def send_events(events: list[dict[str, Any]]) -> None:
     url = f"{settings.SYNC_SERVER_URL}/events"
-    session = requests.Session()
+    with requests.Session() as session:
+        for start in range(0, len(events), settings.EDGE_BATCH_SIZE):
+            batch = events[start : start + settings.EDGE_BATCH_SIZE]
+            body = json.dumps({"events": batch}, separators=(",", ":"), sort_keys=True).encode(
+                "utf-8"
+            )
+            headers = make_auth_headers(settings.EDGE_NODE_ID, settings.EDGE_NODE_SECRET, body)
+            headers["Content-Type"] = "application/json"
+            headers["Accept"] = "application/json"
 
-    for start in range(0, len(events), settings.EDGE_BATCH_SIZE):
-        batch = events[start : start + settings.EDGE_BATCH_SIZE]
-        body = json.dumps({"events": batch}, separators=(",", ":"), sort_keys=True).encode(
-            "utf-8"
-        )
-        headers = make_auth_headers(settings.EDGE_NODE_ID, settings.EDGE_NODE_SECRET, body)
-        headers["Content-Type"] = "application/json"
-        headers["Accept"] = "application/json"
-
-        resp = session.post(
-            url,
-            data=body,
-            headers=headers,
-            timeout=settings.EDGE_REQUEST_TIMEOUT,
-        )
-        resp.raise_for_status()
-        logger.info(
-            "Sent %d event(s) to server: HTTP %d %s",
-            len(batch),
-            resp.status_code,
-            resp.text[:200],
-        )
+            resp = session.post(
+                url,
+                data=body,
+                headers=headers,
+                timeout=settings.EDGE_REQUEST_TIMEOUT,
+            )
+            resp.raise_for_status()
+            logger.info(
+                "Sent %d event(s) to server: HTTP %d %s",
+                len(batch),
+                resp.status_code,
+                resp.text[:200],
+            )
 
 
 def main() -> None:

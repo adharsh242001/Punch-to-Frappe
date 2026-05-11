@@ -35,6 +35,13 @@ class EventStore:
             self._local.conn = conn
         return self._local.conn
 
+    def close(self) -> None:
+        """Close this thread's SQLite connection if one has been opened."""
+        conn = getattr(self._local, "conn", None)
+        if conn is not None:
+            conn.close()
+            del self._local.conn
+
     def _init_db(self) -> None:
         conn = self._conn()
         conn.executescript(

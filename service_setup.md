@@ -74,3 +74,21 @@ NSSM (Non-Sucking Service Manager) makes your script look like a real Windows Se
 
 ### Important: Virtual Environments
 If you are using a Python Virtual Environment (`venv`), make sure you point to the `python.exe` **inside** that virtual environment folder (e.g., `d:\Private\hrms\Punch_to Frappe\venv\Scripts\python.exe`) instead of the global one.
+
+---
+
+## Distributed Setup Commands
+
+For the central server in the PC A / PC B topology, use this script instead of `attendance_sync\main.py`:
+
+```text
+attendance_sync\server.py
+```
+
+For each edge PC, use:
+
+```text
+attendance_sync\edge_agent.py
+```
+
+The same Task Scheduler, PM2, or NSSM steps apply; only the script name changes.

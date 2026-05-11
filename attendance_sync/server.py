@@ -214,6 +214,7 @@ def main() -> None:
         server.shutdown()
         server.server_close()
         frappe.close()
+        store.close()
 
 
 if __name__ == "__main__":
