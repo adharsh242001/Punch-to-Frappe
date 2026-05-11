@@ -1,0 +1,28 @@
+services:
+  punch-sync-server:
+    image: codeaceitsolutionsllp/punch-to-frappe:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: punch-sync-server
+    restart: unless-stopped
+    user: "10001:10001"
+    env_file:
+      - .env.server
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/app/data
+      - ./employee_map.json:/app/employee_map.json:ro
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import json,urllib.request; print(json.load(urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=5))['ok'])",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s

@@ -100,6 +100,130 @@ How the key check works:
 
 On the central server, create or edit `.env`.
 
+### Option A: Ubuntu Server With Docker
+
+Use this option for a real Ubuntu server.
+
+Install Docker:
+
+```bash
+sudo apt update
+sudo apt install -y ca-certificates curl
+sudo install -m 0755 -d /etc/apt/keyrings
+sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+sudo chmod a+r /etc/apt/keyrings/docker.asc
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+sudo apt update
+sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+```
+
+Allow your user to run Docker:
+
+```bash
+sudo usermod -aG docker $USER
+```
+
+Log out and log back in after running that command.
+
+Create the server env file:
+
+```bash
+cp examples/env.server.docker.example .env.server
+```
+
+Edit `.env.server`:
+
+```bash
+nano .env.server
+```
+
+Generate PC keys:
+
+```bash
+python3 generate_sync_keys.py
+```
+
+Put the generated `SERVER_NODE_KEYS=...` line into `.env.server`.
+
+Create the data folder and give it to the same non-root user used inside the container:
+
+```bash
+mkdir -p data
+sudo chown -R 10001:10001 data
+```
+
+Build and start:
+
+```bash
+docker compose up -d --build
+```
+
+Check status:
+
+```bash
+docker compose ps
+docker compose logs -f punch-sync-server
+```
+
+Health check:
+
+```bash
+curl http://localhost:8080/health
+```
+
+Update after pulling new code:
+
+```bash
+docker compose up -d --build
+```
+
+Stop:
+
+```bash
+docker compose down
+```
+
+The container runs as UID/GID `10001:10001`, not root.
+
+### Docker Image Build In GitHub Actions
+
+The repository includes:
+
+```text
+.github/workflows/docker-image.yml
+```
+
+It matches the sample worker style:
+
+- Builds on pushes to `main`.
+- Builds on tags like `v1.0.0`.
+- Uses Docker Buildx.
+- Logs in to Docker Hub with repository secrets.
+- Pushes a `linux/amd64` image.
+- Publishes branch, tag, SHA, and `latest` tags.
+
+Add these GitHub repository secrets before using it:
+
+```text
+DOCKERHUB_USERNAME
+DOCKERHUB_TOKEN
+```
+
+The image name is currently:
+
+```text
+codeaceitsolutionsllp/punch-to-frappe
+```
+
+If you want a different Docker Hub image, change it in both:
+
+```text
+.github/workflows/docker-image.yml
+docker-compose.yml
+```
+
+### Option B: Windows Or Direct Python
+
 Fast path:
 
 ```powershell

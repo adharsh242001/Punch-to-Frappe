@@ -220,6 +220,15 @@ Use this when the punch devices are split across two PCs and one central machine
 
 For a step-by-step setup checklist, see `DISTRIBUTED_SYNC_GUIDE.md`.
 
+For an Ubuntu server, use the included Docker files:
+
+```bash
+cp examples/env.server.docker.example .env.server
+mkdir -p data
+sudo chown -R 10001:10001 data
+docker compose up -d --build
+```
+
 Recommended layout:
 
 - PC A: can reach its own Hikvision devices.
