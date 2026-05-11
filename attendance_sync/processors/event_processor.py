@@ -101,12 +101,14 @@ class EventProcessor:
 
     # ── main entry point ──────────────────────────────────────────────────────
 
-    def process(self, event: dict[str, Any]) -> None:
+    def process(self, event: dict[str, Any]) -> str:
         """
         Handle one raw event dict from a Hikvision device.
 
         Fields expected in *event*:
           employeeNoString, name, time, serialNo, deviceIP
+
+        Returns a short result string useful for queued/server workflows.
         """
         serial_no = str(event.get("serialNo", "")).strip()
         device_ip = event.get("deviceIP", "")
@@ -116,7 +118,7 @@ class EventProcessor:
 
         if not serial_no:
             logger.warning("Event missing serialNo – skipping: %s", event)
-            return
+            return "skipped_missing_serial"
 
         # 1. Skip already-processed events (serialNo dedup)
         if self._store.is_processed(serial_no):
@@ -125,7 +127,7 @@ class EventProcessor:
                 serial_no,
                 employee_no,
             )
-            return
+            return "already_processed"
 
         # 2. Parse timestamp
         event_dt = _parse_event_time(raw_time)
@@ -135,7 +137,7 @@ class EventProcessor:
                 serial_no,
                 raw_time,
             )
-            return
+            return "skipped_bad_time"
 
         # 3. Map device employee number → HRMS employee ID
         norm_id = self._normalize_id(employee_no)
@@ -152,7 +154,7 @@ class EventProcessor:
                     name,
                     device_ip,
                 )
-            return
+            return "skipped_missing_mapping"
 
         # 4. 30-second window dedup per employee
         if self._store.is_duplicate_punch(hrms_id, event_dt, self._dedup_window):
@@ -164,11 +166,11 @@ class EventProcessor:
             )
             # Still mark as processed so we don't keep evaluating it
             self._store.mark_processed(serial_no, employee_no, device_ip, raw_time)
-            return
+            return "skipped_duplicate_window"
 
         # 5. Push to Frappe
         frappe_time = _format_for_frappe(event_dt)
-        self._push_checkin(
+        return self._push_checkin(
             hrms_id=hrms_id,
             frappe_time=frappe_time,
             device_ip=device_ip,
@@ -226,7 +228,7 @@ class EventProcessor:
         log_type: str | None = None,
         latitude: str | float | None = None,
         longitude: str | float | None = None,
-    ) -> None:
+    ) -> str:
         # Resolve friendly name if configured, otherwise use IP
         device_id = settings.DEVICE_NAMES.get(device_ip, device_ip)
 
@@ -253,6 +255,7 @@ class EventProcessor:
             # Remove from retry queue if this was a retry
             if retry_row_id is not None:
                 self._store.remove_retry(retry_row_id)
+            return "pushed"
 
         except FrappeAPIError as exc:
             if exc.is_duplicate:
@@ -263,7 +266,7 @@ class EventProcessor:
                 self._store.mark_processed(serial_no, employee_no, device_ip, raw_time)
                 if retry_row_id is not None:
                     self._store.remove_retry(retry_row_id)
-                return
+                return "frappe_duplicate"
 
             if exc.is_client_error:
                 logger.error(
@@ -275,7 +278,7 @@ class EventProcessor:
                 self._store.mark_processed(serial_no, employee_no, device_ip, raw_time)
                 if retry_row_id is not None:
                     self._store.remove_retry(retry_row_id)
-                return
+                return "discarded_client_error"
 
             # Transient error → schedule retry
             next_attempt = attempt + 1
@@ -296,3 +299,4 @@ class EventProcessor:
                 next_retry=next_retry,
                 error=str(exc),
             )
+            return "queued_retry"

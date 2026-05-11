@@ -9,8 +9,10 @@ Responsibilities
 """
 import sqlite3
 import threading
+import json
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 
 class EventStore:
@@ -59,6 +61,18 @@ class EventStore:
                 attempts    INTEGER NOT NULL DEFAULT 0,
                 next_retry  TEXT    NOT NULL,
                 last_error  TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS inbound_events (
+                id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_node    TEXT    NOT NULL,
+                source_event_id TEXT    NOT NULL,
+                payload        TEXT    NOT NULL,
+                status         TEXT    NOT NULL DEFAULT 'pending',
+                received_at    TEXT    NOT NULL,
+                processed_at   TEXT,
+                last_result    TEXT,
+                UNIQUE(source_node, source_event_id)
             );
             """
         )
@@ -185,3 +199,91 @@ class EventStore:
         )
         self._conn().commit()
         return cur.rowcount
+
+    # ── inbound edge queue ───────────────────────────────────────────────────
+
+    def enqueue_inbound_events(
+        self,
+        source_node: str,
+        events: list[dict[str, Any]],
+    ) -> tuple[int, int]:
+        """Store raw events received from an edge node; return inserted/skipped counts."""
+        now = datetime.now(timezone.utc).isoformat()
+        inserted = 0
+        skipped = 0
+
+        for event in events:
+            source_event_id = self._source_event_id(event)
+            payload = json.dumps(event, separators=(",", ":"), sort_keys=True)
+            cur = self._conn().execute(
+                """
+                INSERT OR IGNORE INTO inbound_events
+                    (source_node, source_event_id, payload, received_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (source_node, source_event_id, payload, now),
+            )
+            if cur.rowcount:
+                inserted += 1
+            else:
+                skipped += 1
+
+        self._conn().commit()
+        return inserted, skipped
+
+    def get_pending_inbound_events(self, limit: int = 500) -> list[dict[str, Any]]:
+        """Return queued edge events that still need to be pushed to Frappe."""
+        cur = self._conn().execute(
+            """
+            SELECT id, source_node, payload
+            FROM inbound_events
+            WHERE status = 'pending'
+            ORDER BY received_at, id
+            LIMIT ?
+            """,
+            (limit,),
+        )
+        rows = []
+        for row in cur.fetchall():
+            rows.append(
+                {
+                    "id": row["id"],
+                    "source_node": row["source_node"],
+                    "payload": json.loads(row["payload"]),
+                }
+            )
+        return rows
+
+    def mark_inbound_processed(self, row_id: int, result: str) -> None:
+        """Mark an inbound event as handled by the central processor."""
+        now = datetime.now(timezone.utc).isoformat()
+        self._conn().execute(
+            """
+            UPDATE inbound_events
+            SET status = 'done', processed_at = ?, last_result = ?
+            WHERE id = ?
+            """,
+            (now, result, row_id),
+        )
+        self._conn().commit()
+
+    def pending_inbound_count(self) -> int:
+        cur = self._conn().execute(
+            "SELECT COUNT(*) AS count FROM inbound_events WHERE status = 'pending'"
+        )
+        row = cur.fetchone()
+        return int(row["count"]) if row else 0
+
+    @staticmethod
+    def _source_event_id(event: dict[str, Any]) -> str:
+        """Build a stable source id when the device serial number is missing."""
+        serial_no = str(event.get("serialNo", "")).strip()
+        if serial_no:
+            return serial_no
+
+        parts = [
+            str(event.get("deviceIP", "")).strip(),
+            str(event.get("employeeNoString", "")).strip(),
+            str(event.get("time", "")).strip(),
+        ]
+        return "|".join(parts)

@@ -41,9 +41,6 @@ for entry in _DEVICES_RAW:
     
     DEVICE_CONFIGS.append(config)
 
-if not DEVICE_CONFIGS:
-    raise EnvironmentError("DEVICES must list at least one IP in .env")
-
 DEVICE_IPS = [c["ip"] for c in DEVICE_CONFIGS]
 DEVICE_USER: str = os.getenv("DEVICE_USER", "")
 DEVICE_PASS: str = os.getenv("DEVICE_PASS", "")
@@ -94,6 +91,27 @@ STORE_PATH.parent.mkdir(parents=True, exist_ok=True)
 # ── Retry queue ───────────────────────────────────────────────────────────────
 RETRY_MAX_ATTEMPTS: int = int(os.getenv("RETRY_MAX_ATTEMPTS", "5"))
 RETRY_BACKOFF_BASE: float = float(os.getenv("RETRY_BACKOFF_BASE", "2.0"))  # seconds
+
+# ── Edge-to-server sync ───────────────────────────────────────────────────────
+# Central server bind settings.
+SERVER_HOST: str = os.getenv("SERVER_HOST", "0.0.0.0")
+SERVER_PORT: int = int(os.getenv("SERVER_PORT", "8080"))
+
+# Comma-separated node_id:shared_secret values accepted by the central server.
+# Example: SERVER_NODE_KEYS=pc-a:longSecretA,pc-b:longSecretB
+_SERVER_NODE_KEYS_RAW = os.getenv("SERVER_NODE_KEYS", "")
+SERVER_NODE_KEYS: dict[str, str] = {}
+for entry in _SERVER_NODE_KEYS_RAW.split(","):
+    if ":" in entry:
+        node_id, secret = entry.split(":", 1)
+        SERVER_NODE_KEYS[node_id.strip()] = secret.strip()
+
+# Edge agent settings. Each PC uses its own node id and secret.
+SYNC_SERVER_URL: str = os.getenv("SYNC_SERVER_URL", "").rstrip("/")
+EDGE_NODE_ID: str = os.getenv("EDGE_NODE_ID", "")
+EDGE_NODE_SECRET: str = os.getenv("EDGE_NODE_SECRET", "")
+EDGE_BATCH_SIZE: int = int(os.getenv("EDGE_BATCH_SIZE", "200"))
+EDGE_REQUEST_TIMEOUT: int = int(os.getenv("EDGE_REQUEST_TIMEOUT", "20"))
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO").upper()

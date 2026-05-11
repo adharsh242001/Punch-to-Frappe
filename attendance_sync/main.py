@@ -142,6 +142,9 @@ def run_manual_sync(start_time: datetime, end_time: datetime) -> None:
 def main() -> None:
     _setup_logging()
     logger.info("=== Attendance Sync Service starting ===")
+    if not settings.DEVICE_CONFIGS:
+        raise EnvironmentError("DEVICES must list at least one IP when running the poller.")
+
     logger.info(
         "Devices: %s | Poll interval: %ds | Dedup window: %ds",
         ", ".join(settings.DEVICE_IPS),
