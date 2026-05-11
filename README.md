@@ -218,6 +218,8 @@ Stop it with `Ctrl+C`. The script handles shutdown cleanly after the current ope
 
 Use this when the punch devices are split across two PCs and one central machine should be the only machine that pushes to Frappe.
 
+For a step-by-step setup checklist, see `DISTRIBUTED_SYNC_GUIDE.md`.
+
 Recommended layout:
 
 - PC A: can reach its own Hikvision devices.
@@ -228,6 +230,7 @@ Security model:
 
 - Each edge PC signs every upload with HMAC-SHA256.
 - The central server only accepts node IDs and secrets listed in `SERVER_NODE_KEYS`.
+- Generate node keys with `python generate_sync_keys.py`.
 - For best transport safety, run this over HTTPS, a VPN, Tailscale, ZeroTier, or a private LAN. HMAC proves the sender and prevents tampering, but plain HTTP does not encrypt the punch data.
 
 ### Central Server Setup
