@@ -1,0 +1,7 @@
+interface:
+  display_name: "Product Team Agents"
+  short_description: "Coordinate specialist product agents"
+  default_prompt: "Use $product-team-agents to choose and coordinate the right specialist agents for this product goal."
+
+policy:
+  allow_implicit_invocation: true

@@ -1,356 +1,401 @@
 # Punch-to-Frappe
 
-A production-ready attendance synchronization service that continuously polls Hikvision biometric devices and automatically syncs attendance records to Frappe HRMS.
+Punch-to-Frappe reads punch events from Hikvision biometric/access-control devices and sends them to Frappe HRMS as `Employee Checkin` records.
 
-## Overview
+It currently supports three workflows:
 
-**Punch-to-Frappe** bridges the gap between physical access-control systems and HR management systems. It automates the collection of attendance data from Hikvision devices and pushes them to Frappe HRMS, eliminating manual data entry and ensuring real-time attendance tracking.
+- Continuous sync service: keeps polling devices and pushes new checkins to Frappe.
+- Manual date-range sync: backfills a specific period into Frappe.
+- CSV export: downloads punch records from devices into a CSV for checking, mapping, or audit.
 
-### Key Features
+## How It Works
 
-- **Continuous Device Polling**: Automatically fetches attendance events from multiple Hikvision devices at configurable intervals
-- **Intelligent Deduplication**: Prevents duplicate entries within a configurable time window (default: 30 seconds)
-- **Employee Mapping**: Maps device employee IDs to Frappe employee records via a JSON mapping file
-- **Automatic Retries**: Implements exponential backoff retry logic for failed API requests
-- **Graceful Shutdown**: Handles SIGINT/SIGTERM signals for clean service termination
-- **Flexible Logging**: Supports both console and file-based logging with configurable verbosity
-- **Event Persistence**: Stores events locally before pushing to HRMS for reliability
-- **Timezone Support**: Preserves device local timezone for accurate working hour records
+1. The script loads device, Frappe, and mapping settings from `.env`.
+2. For each configured Hikvision device, it calls:
 
-## Architecture
+   ```text
+   /ISAPI/AccessControl/AcsEvent?format=json
+   ```
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    Attendance Sync Service                   │
-└─────────────────────────────────────────────────────────────┘
-         │                      │                    │
-         ▼                      ▼                    ▼
-    ┌─────────┐          ┌──────────┐         ┌────────────┐
-    │Hikvision│          │EventStore│         │   Config   │
-    │ Devices │          │  (Local) │         │(Env Vars)  │
-    └─────────┘          └──────────┘         └────────────┘
-         │                      │                    │
-         └──────────────────────┼────────────────────┘
-                                │
-                         ┌──────▼──────┐
-                         │EventProcessor│
-                         │ (Deduplicate,│
-                         │  Map IDs)    │
-                         └──────┬───────┘
-                                │
-                         ┌──────▼───────┐
-                         │ Frappe HRMS  │
-                         │   (API)      │
-                         └──────────────┘
-```
+3. The device returns punch events containing values like employee number, employee name, punch time, serial number, and source device.
+4. The employee number from the device is matched against `employee_map.json`.
+5. If the employee is mapped and the event is not a duplicate, the script creates an `Employee Checkin` record in Frappe HRMS.
+6. Successfully processed event serial numbers are stored in SQLite so the same event is not pushed again.
+7. Temporary Frappe/API failures are saved into a retry queue and retried later.
 
-## Project Structure
+## Project Layout
 
-```
+```text
 attendance_sync/
-├── main.py                    # Service entry point with poll loop
-├── config/
-│   ├── __init__.py
-│   └── settings.py            # Environment configuration loader
-├── devices/
-│   ├── __init__.py
-│   └── hikvision_client.py    # Hikvision device ISAPI client
-├── hrms/
-│   ├── __init__.py
-│   └── frappe_client.py       # Frappe HRMS REST API client
-├── processors/
-│   ├── __init__.py
-│   └── event_processor.py     # Event processing & deduplication
-└── storage/
-    ├── __init__.py
-    └── event_store.py         # Local event persistence layer
+  main.py                       Continuous service and shared sync logic
+  manual_sync.py                One-off date range sync into Frappe
+  config/settings.py            .env loading and runtime settings
+  devices/hikvision_client.py   Hikvision ISAPI client
+  hrms/frappe_client.py         Frappe Employee Checkin API client
+  processors/event_processor.py Employee mapping, duplicate checks, retries
+  storage/event_store.py        SQLite store for processed events and retries
+
+export_punch_records.py         Export device punches to CSV
+employee_map.json               Device employee number to Frappe employee ID map
+.env.example                    Example configuration
+service_setup.md                Windows service setup notes
+data/                           CSV exports and local SQLite database
 ```
 
 ## Requirements
 
-- **Python**: 3.7+ (for f-strings and `datetime.fromisoformat`)
-- **Dependencies**:
-  - `requests>=2.31.0` - HTTP client for device and API communication
-  - `python-dotenv>=1.0.0` - Environment configuration management
+- Python 3.10 or newer is recommended.
+- Network access from this machine to the Hikvision devices.
+- A Frappe HRMS API key/secret with permission to create `Employee Checkin` records.
 
-## Installation
+Install Python packages:
 
-1. **Clone the repository**:
-   ```bash
-   git clone https://github.com/adharshachu/Punch-to-Frappe.git
-   cd Punch-to-Frappe
+```powershell
+pip install -r requirements.txt
+```
+
+Dependencies are:
+
+- `requests`
+- `python-dotenv`
+
+## First-Time Setup
+
+1. Create your environment file:
+
+   ```powershell
+   Copy-Item .env.example .env
    ```
 
-2. **Install dependencies**:
-   ```bash
-   pip install -r requirements.txt
+2. Edit `.env` and fill in:
+
+   ```env
+   DEVICES=10.10.10.166,10.10.10.128
+   DEVICE_USER=admin
+   DEVICE_PASS=your_device_password
+
+   HRMS_URL=https://your-frappe-site.example.com
+   HRMS_API_KEY=your_api_key
+   HRMS_API_SECRET=your_api_secret
    ```
 
-3. **Create `.env` file** in the project root:
-   ```bash
-   cp .env.example .env
+3. Confirm `employee_map.json` maps device employee numbers to Frappe employee IDs.
+
+4. Run a small CSV export first to confirm the devices are reachable:
+
+   ```powershell
+   python export_punch_records.py --start 2026-05-01 --end 2026-05-01 --output data\test_punch_records.csv
    ```
 
-4. **Configure environment variables** (see Configuration section below)
+5. After the CSV looks correct, run a manual sync for a small period:
 
-5. **Create employee mapping** (see Employee Mapping section below)
+   ```powershell
+   python attendance_sync\manual_sync.py --from "2026-05-01 00:00:00" --to "2026-05-01 23:59:59"
+   ```
+
+6. Once the manual sync is verified in Frappe, start the continuous service:
+
+   ```powershell
+   python attendance_sync\main.py
+   ```
 
 ## Configuration
 
-All configuration is managed via environment variables in the `.env` file:
+All runtime settings are read from `.env`.
 
-### Required Variables
+### Required Settings
 
-| Variable | Description | Example |
-|----------|-------------|---------|
-| `DEVICES` | Comma-separated list of device IPs and credentials | `10.10.10.131:admin:pass123,10.10.10.132` |
-| `HRMS_URL` | Frappe HRMS instance URL | `https://hrms.example.com` |
-| `HRMS_API_KEY` | Frappe API key | `your-api-key` |
-| `HRMS_API_SECRET` | Frappe API secret | `your-api-secret` |
+| Setting | Purpose | Example |
+| --- | --- | --- |
+| `DEVICES` | Comma-separated Hikvision device IPs. Each device can optionally include credentials. | `10.10.10.166,10.10.10.128` |
+| `DEVICE_USER` | Default Hikvision username. | `admin` |
+| `DEVICE_PASS` | Default Hikvision password. | `password` |
+| `HRMS_URL` | Frappe HRMS site URL without trailing slash. | `https://hrms.example.com` |
+| `HRMS_API_KEY` | Frappe API key. | `abc123` |
+| `HRMS_API_SECRET` | Frappe API secret. | `secret123` |
 
-### Optional Variables
+### Optional Settings
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `DEVICE_USER` | (none) | Global device username (overridden by per-device config) |
-| `DEVICE_PASS` | (none) | Global device password (overridden by per-device config) |
-| `HIKVISION_USE_HTTPS` | `true` | Use HTTPS for device communication |
-| `HIKVISION_VERIFY_SSL` | `false` | Verify SSL certificates (useful for self-signed certs) |
-| `DEVICE_NAMES` | (none) | Friendly names mapping (e.g., `10.10.10.131:GATE-01`) |
-| `POLL_INTERVAL` | `600` | Seconds between polling cycles |
-| `DEDUP_WINDOW` | `30` | Seconds for duplicate detection window |
-| `FIRST_RUN_LOOKBACK_HOURS` | `24` | Hours to look back on first run |
-| `EVENT_MAJOR` | `5` | Hikvision event major type (5 = access control) |
-| `EVENT_MINOR` | `75` | Hikvision event minor type (75 = face recognition) |
-| `DEFAULT_LOG_TYPE` | `IN` | Default check-in type (`IN` or `OUT`) |
-| `LATITUDE` | (none) | Default latitude for geolocation tagging |
-| `LONGITUDE` | (none) | Default longitude for geolocation tagging |
-| `EMPLOYEE_MAP` | `employee_map.json` | Path to employee ID mapping file |
-| `STORE_PATH` | `data/events.db` | Path to local event store |
-| `RETRY_MAX_ATTEMPTS` | `5` | Maximum retry attempts for failed API calls |
-| `RETRY_BACKOFF_BASE` | `2.0` | Exponential backoff base in seconds |
-| `LOG_LEVEL` | `INFO` | Logging verbosity (`DEBUG`, `INFO`, `WARNING`, `ERROR`) |
-| `LOG_FILE` | (none) | Optional log file path (stdout if not set) |
+| Setting | Default | Purpose |
+| --- | --- | --- |
+| `HIKVISION_USE_HTTPS` | `true` | Use HTTPS for device calls. If connection fails, the client tries the other protocol. |
+| `HIKVISION_VERIFY_SSL` | `false` | Verify device SSL certificates. Usually false for local Hikvision devices. |
+| `DEVICE_NAMES` | empty | Friendly names sent to Frappe instead of raw IPs. |
+| `POLL_INTERVAL` | `600` | Seconds between continuous service polling cycles. |
+| `FIRST_RUN_LOOKBACK_HOURS` | `24` | On service startup, fetch this many previous hours. |
+| `DEDUP_WINDOW` | `30` | Ignore another punch from the same mapped employee within this many seconds. |
+| `EVENT_MAJOR` | `5` | Hikvision event major filter. |
+| `EVENT_MINOR` | `75` | Hikvision event minor filter. |
+| `EMPLOYEE_MAP` | `employee_map.json` | Path to the employee mapping JSON file. |
+| `STORE_PATH` | `data/events.db` | SQLite database for processed events, last punch times, and retries. |
+| `RETRY_MAX_ATTEMPTS` | `5` | Maximum retry attempts for transient Frappe/API errors. |
+| `RETRY_BACKOFF_BASE` | `2.0` | Exponential retry delay base. |
+| `DEFAULT_LOG_TYPE` | `IN` | Checkin log type sent to Frappe. |
+| `LATITUDE` | empty | Optional latitude added to checkin records. |
+| `LONGITUDE` | empty | Optional longitude added to checkin records. |
+| `LOG_LEVEL` | `INFO` | Logging level: `DEBUG`, `INFO`, `WARNING`, or `ERROR`. |
+| `LOG_FILE` | empty | Optional log file path. If empty, logs go to the console. |
 
-### Device Configuration Examples
+### Device Credentials
 
-**Single device with default credentials**:
-```
-DEVICES=10.10.10.131
+Use global credentials when all devices use the same login:
+
+```env
+DEVICES=10.10.10.166,10.10.10.128,10.10.10.165
 DEVICE_USER=admin
-DEVICE_PASS=password123
+DEVICE_PASS=common_password
 ```
 
-**Multiple devices with mixed credentials**:
-```
-DEVICES=10.10.10.131:admin:pass1,10.10.10.132,10.10.10.133:root:pass3
+Use per-device credentials when needed:
+
+```env
+DEVICES=10.10.10.166:admin:pass1,10.10.10.128:admin:pass2,10.10.10.165
 DEVICE_USER=admin
-DEVICE_PASS=pass2
+DEVICE_PASS=fallback_password
+```
+
+In the example above, `10.10.10.165` uses the fallback `DEVICE_USER` and `DEVICE_PASS`.
+
+### Friendly Device Names
+
+By default, Frappe receives the device IP as `device_id`.
+
+To send a readable name instead:
+
+```env
+DEVICE_NAMES=10.10.10.166:BIOMETRIC-01,10.10.10.128:BIOMETRIC-02
 ```
 
 ## Employee Mapping
 
-Create an `employee_map.json` file to map device employee IDs to Frappe employee IDs:
+`employee_map.json` maps the employee number stored in the Hikvision device to the Frappe employee ID.
+
+Example:
 
 ```json
 {
-  "0001": "EMP-001",
-  "0002": "EMP-002",
-  "1234": "john.doe",
-  "prefix_1001": "MGR-001"
+  "339": "339",
+  "269": "296",
+  "i36": "327",
+  "00001010": "276"
 }
 ```
 
-The mapping supports:
-- Numeric IDs (with optional leading zeros)
-- Alphanumeric prefixed IDs
-- Case-insensitive matching (keys are normalized to lowercase)
+Important mapping behavior:
 
-## Usage
+- Keys are matched case-insensitively, so `I24` and `i24` are treated the same.
+- Numeric keys are normalized by removing leading zeroes.
+- If a punch employee number is not in the map, that punch is skipped and logged.
+- If you want to use another mapping file, set `EMPLOYEE_MAP`:
 
-### Start the Service
+  ```env
+  EMPLOYEE_MAP=employee_map copy.json
+  ```
 
-```bash
-python attendance_sync/main.py
+## Running Continuous Sync
+
+Start the normal service:
+
+```powershell
+python attendance_sync\main.py
 ```
 
-The service will:
-1. Load configuration from `.env` and employee mapping
-2. Set up logging to console and/or file
-3. Register graceful shutdown handlers (SIGINT, SIGTERM)
-4. Enter the polling loop:
-   - Query each device for events since the last cycle
-   - Process and deduplicate events
-   - Push to Frappe HRMS
-   - Sleep for `POLL_INTERVAL` seconds
-5. On shutdown signal: Complete current cycle and exit cleanly
+What happens while it runs:
 
-### Running as a System Service
+- On startup, it looks back `FIRST_RUN_LOOKBACK_HOURS` hours.
+- After that, each cycle fetches events from the last poll time to the current time.
+- Each configured device is polled one after another.
+- At the end of each cycle, due retry items are processed.
+- The service sleeps for `POLL_INTERVAL` seconds and repeats.
 
-#### Windows Task Scheduler (Recommended)
+Stop it with `Ctrl+C`. The script handles shutdown cleanly after the current operation.
 
-1. Create `run_sync.bat`:
-   ```batch
-   @echo off
-   cd /d "d:\Private\hrms\Punch_to_Frappe"
-   python attendance_sync\main.py
-   pause
-   ```
+## Running Manual Sync
 
-2. Open Task Scheduler (`Win + R` → `taskschd.msc`)
-3. Create New Task:
-   - **General**: Enable "Run whether user is logged on or not"
-   - **Triggers**: Set to "At startup"
-   - **Actions**: Run `run_sync.bat`
-   - **Settings**: Enable auto-restart on failure
+Use manual sync when you need to backfill a known date/time range into Frappe:
 
-#### PM2 (Professional Process Manager)
-
-```bash
-# Install PM2
-npm install -g pm2
-
-# Start service
-pm2 start attendance_sync/main.py --name "attendance-sync"
-
-# Save for reboot
-pm2 save
-pm2-startup
+```powershell
+python attendance_sync\manual_sync.py --from "2026-05-01 00:00:00" --to "2026-05-10 23:59:59"
 ```
 
-#### NSSM (Windows Native Service)
+Accepted date formats:
 
-See `service_setup.md` for detailed instructions.
+```text
+2026-05-01 09:00:00
+2026-05-01T09:00:00
+2026-05-01T09:00:00+05:30
+```
+
+Manual sync uses the same employee map, duplicate protection, Frappe push logic, and retry queue as the continuous service.
+
+## Exporting Punch Records To CSV
+
+Use CSV export when you want to inspect raw device punches without pushing anything to Frappe:
+
+```powershell
+python export_punch_records.py --start 2026-05-01 --end 2026-05-10 --output data\punch_records_2026-05-01_to_2026-05-10.csv
+```
+
+The CSV contains:
+
+- `device_ip`
+- `device_name`
+- `employee_no`
+- `mapped_employee_id`
+- `employee_name`
+- `event_time`
+- `serial_no`
+
+This is useful for:
+
+- Checking whether devices are reachable.
+- Finding employee numbers that are missing from `employee_map.json`.
+- Comparing raw device punches against Frappe records.
+- Keeping an audit copy for a date range.
+
+There is also a helper batch file for Q1 2026:
+
+```powershell
+.\export_q1_2026_punch_records.bat
+```
+
+## Local SQLite Store
+
+By default, runtime state is stored in:
+
+```text
+data/events.db
+```
+
+The database has three responsibilities:
+
+- `processed_events`: stores Hikvision `serialNo` values that have already been handled.
+- `last_punch`: stores each employee's last punch time for duplicate-window checks.
+- `retry_queue`: stores checkins that failed because of temporary Frappe/API problems.
+
+Do not delete `data/events.db` unless you intentionally want the sync to forget what it already processed. If you delete it, old device events inside the queried date range may be pushed again unless Frappe rejects them as duplicates.
+
+## Duplicate And Retry Rules
+
+Duplicate protection happens in two layers:
+
+- Same Hikvision `serialNo`: never processed twice once recorded in `processed_events`.
+- Same mapped employee within `DEDUP_WINDOW`: skipped as a duplicate punch.
+
+Frappe error handling:
+
+- Duplicate responses from Frappe, usually HTTP `409` or `417`, are marked as processed.
+- Other HTTP `4xx` errors are treated as permanent and are not retried.
+- Connection errors, timeouts, and server-side failures are added to the retry queue.
 
 ## Logging
 
-Logs follow this format:
+Default logging goes to the console.
+
+For more detail:
+
+```env
+LOG_LEVEL=DEBUG
 ```
-2026-04-07 14:25:30  INFO     root             === Attendance Sync Service starting ===
-2026-04-07 14:25:30  INFO     root             Devices: 10.10.10.131 | Poll interval: 600s | Dedup window: 30s
-2026-04-07 14:25:31  DEBUG    devices          [10.10.10.131] Fetched 3 event(s) in this cycle.
+
+To write a log file:
+
+```env
+LOG_FILE=data/attendance_sync.log
 ```
 
-### Log Levels
+Typical useful log messages:
 
-- **DEBUG**: Detailed operation info (event counts, processing steps)
-- **INFO**: High-level service status and configuration
-- **WARNING**: Issues that don't stop execution (malformed timestamps)
-- **ERROR**: Failures requiring investigation (device connection errors, API failures)
+- Employee map loaded count.
+- Device polling count.
+- Missing employee mappings.
+- Duplicate punch skips.
+- Frappe push success/failure.
+- Retry queue processing.
 
-## How It Works
+## Running On Windows Full-Time
 
-### Poll Cycle
+For a full-time installation, use one of these:
 
-1. **Fetch Events**: Query each device for events in time window `[last_poll_time, now]`
-2. **Parse Events**: Convert device timestamps (ISO-8601) to UTC
-3. **Process**:
-   - Map device employee IDs to Frappe employee IDs
-   - Check deduplication window (ignore duplicate serial numbers within 30 seconds)
-   - Format timestamp for Frappe format (`YYYY-MM-DD HH:MM:SS`)
-4. **Push to HRMS**: Call Frappe API to create Employee Checkin records
-5. **Retry on Failure**: Exponential backoff (2^attempt * backoff_base seconds)
-6. **Store Locally**: Persist events for audit trail and recovery
+- Windows Task Scheduler
+- PM2
+- NSSM as a Windows service
 
-### Deduplication
+Detailed setup notes are in `service_setup.md`.
 
-Events are uniquely identified by `(serial_number, time_window)`. If the same serial number appears twice within 30 seconds, the second occurrence is ignored.
+If you use a virtual environment, configure the service to run:
 
-### Retry Logic
+```text
+venv\Scripts\python.exe
+```
 
-Failed API calls use exponential backoff:
-- Attempt 1: Immediate
-- Attempt 2: 2 seconds
-- Attempt 3: 4 seconds
-- Attempt 4: 8 seconds
-- Attempt 5: 16 seconds
-
-After 5 failed attempts, the event is logged and dropped.
+instead of the global Python executable.
 
 ## Troubleshooting
 
-### Service Won't Start
+### No Rows In CSV Export
 
-1. **Check environment variables**: Ensure all required vars are set in `.env`
-2. **Verify employee mapping**: Confirm `employee_map.json` exists and is valid JSON
-3. **Test device connectivity**: 
-   ```bash
-   python -c "from devices.hikvision_client import HikvisionClient; HikvisionClient('10.10.10.131', 'admin', 'pass')"
-   ```
-4. **Test Frappe connectivity**:
-   ```bash
-   curl -H "Authorization: token KEY:SECRET" https://hrms.example.com/api/resource/Employee
-   ```
+- Check that `DEVICES`, `DEVICE_USER`, and `DEVICE_PASS` are correct.
+- Check the date range.
+- Confirm the device time/date is correct.
+- Try toggling `HIKVISION_USE_HTTPS`.
+- Set `LOG_LEVEL=DEBUG` and rerun.
 
-### Events Not Syncing
+### Punches Export But Do Not Sync To Frappe
 
-1. **Check logs**: Enable `LOG_LEVEL=DEBUG` for detailed output
-2. **Verify employee mapping**: Ensure device IDs in mapping match actual device IDs
-3. **Check Frappe permissions**: API user must have write access to Employee Checkin doctype
-4. **Verify timestamps**: Ensure device time is synchronized
+- Confirm `HRMS_URL`, `HRMS_API_KEY`, and `HRMS_API_SECRET`.
+- Confirm the API user can create `Employee Checkin`.
+- Check whether employee numbers are missing from `employee_map.json`.
+- Check Frappe for duplicate validation errors.
 
-### High CPU/Memory Usage
+### Missing Employees
 
-1. Reduce `POLL_INTERVAL` (currently defaults to 600s)
-2. Check device logs for event storms
-3. Review `DEDUP_WINDOW` settings
+Export a CSV and look for rows where `mapped_employee_id` is empty:
 
-## API Reference
-
-### Hikvision ISAPI
-
-- **Endpoint**: `POST /ISAPI/AccessControl/AcsEvent`
-- **Auth**: HTTP Digest
-- **Body**: XML or JSON (AcsEventCond format)
-- **Response**: Paginated event records with timestamps, device IDs, serial numbers
-
-### Frappe REST API
-
-- **Endpoint**: `POST /api/resource/Employee Checkin`
-- **Auth**: Token-based (`Authorization: token KEY:SECRET`)
-- **Payload**:
-  ```json
-  {
-    "doctype": "Employee Checkin",
-    "employee": "EMP-001",
-    "log_type": "IN",
-    "time": "2026-04-07 14:25:30",
-    "device_id": "10.10.10.131",
-    "latitude": "12.9716",
-    "longitude": "77.5946"
-  }
-  ```
-
-## Development
-
-### Testing
-
-```bash
-# Install dev dependencies
-pip install -r requirements-dev.txt
-
-# Run tests
-python -m pytest tests/
+```powershell
+python export_punch_records.py --start 2026-05-01 --end 2026-05-10 --output data\missing_map_check.csv
 ```
 
-### Code Structure
+Add the missing `employee_no` values to `employee_map.json`, then rerun manual sync for the affected period.
 
-- **Dependency Injection**: Each component receives dependencies via constructor
-- **Type Hints**: Full type annotations for IDE support and static checking
-- **Logging**: Structured logging with `logging` module
-- **Error Handling**: Graceful degradation with retry logic
+### Duplicate Or Extra Punches
 
-## License
+- Increase `DEDUP_WINDOW` if devices create multiple punches for the same action.
+- Check whether `data/events.db` was deleted or replaced.
+- Confirm the manual sync range is not being run repeatedly after clearing the database.
 
-[Add your license here]
+### Device Authentication Fails
 
-## Support
+The CSV exporter has an extra fallback that can call `curl` with digest authentication if the Python request receives `401 Unauthorized`.
 
-For issues, feature requests, or contributions, please visit the [GitHub repository](https://github.com/adharshachu/Punch-to-Frappe).
+Make sure `curl.exe` is available on Windows:
 
-## Changelog
+```powershell
+curl.exe --version
+```
 
-### v1.0.0 (2026-04-07)
-- Initial release with Hikvision polling and Frappe HRMS integration
-- Deduplication, retry logic, and employee mapping support
-- Graceful shutdown handling
+## Quick Command Reference
+
+Install dependencies:
+
+```powershell
+pip install -r requirements.txt
+```
+
+Export punches:
+
+```powershell
+python export_punch_records.py --start 2026-05-01 --end 2026-05-10 --output data\punch_records_2026-05-01_to_2026-05-10.csv
+```
+
+Manual sync:
+
+```powershell
+python attendance_sync\manual_sync.py --from "2026-05-01 00:00:00" --to "2026-05-10 23:59:59"
+```
+
+Continuous service:
+
+```powershell
+python attendance_sync\main.py
+```
