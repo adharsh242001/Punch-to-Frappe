@@ -104,6 +104,12 @@ On the central server, create or edit `.env`.
 
 Use this option for a real Ubuntu server.
 
+The Docker Hub image for this project is:
+
+```text
+codeaceitsolutionsllp/punch-to-frappe
+```
+
 Install Docker:
 
 ```bash
@@ -158,6 +164,13 @@ Build and start:
 docker compose up -d --build
 ```
 
+If the image has already been pushed to Docker Hub and you want to pull it instead of building on the server:
+
+```bash
+docker compose pull
+docker compose up -d
+```
+
 Check status:
 
 ```bash
@@ -175,6 +188,13 @@ Update after pulling new code:
 
 ```bash
 docker compose up -d --build
+```
+
+Update from Docker Hub:
+
+```bash
+docker compose pull
+docker compose up -d
 ```
 
 Stop:
@@ -209,11 +229,32 @@ DOCKERHUB_USERNAME
 DOCKERHUB_TOKEN
 ```
 
-The image name is currently:
+`DOCKERHUB_USERNAME` should be the Docker Hub account or organization user that can push to:
 
 ```text
 codeaceitsolutionsllp/punch-to-frappe
 ```
+
+`DOCKERHUB_TOKEN` should be a Docker Hub access token with push permission for that repository.
+
+The image name is:
+
+```text
+codeaceitsolutionsllp/punch-to-frappe
+```
+
+The compose file uses:
+
+```text
+codeaceitsolutionsllp/punch-to-frappe:latest
+```
+
+The workflow publishes these tags:
+
+- Commit SHA tag
+- Branch tag
+- Git tag, for example `v1.0.0`
+- `latest` when pushing to the default branch
 
 If you want a different Docker Hub image, change it in both:
 

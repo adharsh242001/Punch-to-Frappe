@@ -229,6 +229,19 @@ sudo chown -R 10001:10001 data
 docker compose up -d --build
 ```
 
+The Docker Hub image is:
+
+```text
+codeaceitsolutionsllp/punch-to-frappe
+```
+
+After GitHub Actions pushes the image, an Ubuntu server can update with:
+
+```bash
+docker compose pull
+docker compose up -d
+```
+
 Recommended layout:
 
 - PC A: can reach its own Hikvision devices.
