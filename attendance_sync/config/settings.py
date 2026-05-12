@@ -85,8 +85,10 @@ def load_employee_map() -> dict[str, str]:
         return json.load(fh)
 
 # ── Storage ───────────────────────────────────────────────────────────────────
+STORAGE_BACKEND: str = os.getenv("STORAGE_BACKEND", "sqlite").lower()
 STORE_PATH: Path = Path(os.getenv("STORE_PATH", str(_ROOT / "data" / "events.db")))
 STORE_PATH.parent.mkdir(parents=True, exist_ok=True)
+POSTGRES_DSN: str = os.getenv("POSTGRES_DSN", "")
 
 # ── Retry queue ───────────────────────────────────────────────────────────────
 RETRY_MAX_ATTEMPTS: int = int(os.getenv("RETRY_MAX_ATTEMPTS", "5"))

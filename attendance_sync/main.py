@@ -25,7 +25,7 @@ from config import settings
 from devices.hikvision_client import HikvisionClient
 from hrms.frappe_client import FrappeClient
 from processors.event_processor import EventProcessor
-from storage.event_store import EventStore
+from storage.factory import create_event_store
 
 # ── logging setup ─────────────────────────────────────────────────────────────
 
@@ -93,7 +93,7 @@ def create_processor() -> tuple[FrappeClient, EventProcessor]:
     if not settings.HRMS_API_SECRET:
         raise EnvironmentError("HRMS_API_SECRET is required when pushing to Frappe.")
 
-    store = EventStore(settings.STORE_PATH)
+    store = create_event_store()
     frappe = FrappeClient(
         base_url=settings.HRMS_URL,
         api_key=settings.HRMS_API_KEY,

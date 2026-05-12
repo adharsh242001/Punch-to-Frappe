@@ -224,10 +224,14 @@ For an Ubuntu server, use the included Docker files:
 
 ```bash
 cp examples/env.server.docker.example .env.server
+cp "employee_map copy.json" employee_map.json
+python3 -m json.tool employee_map.json > /tmp/employee_map_checked.json
 mkdir -p data
 sudo chown -R 10001:10001 data
 docker compose up -d --build
 ```
+
+Use the `cp "employee_map copy.json" employee_map.json` line only if `employee_map copy.json` is the correct final mapping. The central Docker server reads `employee_map.json` and mounts it into the container as read-only.
 
 The Docker Hub image is:
 
@@ -271,6 +275,8 @@ SERVER_PORT=8080
 SERVER_NODE_KEYS=pc-a:long_random_secret_for_a,pc-b:long_random_secret_for_b
 POLL_INTERVAL=600
 ```
+
+Before starting the central server, make sure `employee_map.json` exists beside `docker-compose.yml` or beside the Python scripts. The central server uses this file to map Hikvision employee numbers to Frappe employee IDs. PC A and PC B do not need this file when running `edge_agent.py`; they only upload raw punch events.
 
 Start the central server:
 

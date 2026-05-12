@@ -151,6 +151,58 @@ python3 generate_sync_keys.py
 
 Put the generated `SERVER_NODE_KEYS=...` line into `.env.server`.
 
+Prepare the employee mapping file on the Ubuntu server.
+
+The central server must have the final `employee_map.json`, because the central server is the machine that converts Hikvision employee numbers into Frappe employee IDs before pushing to Frappe.
+
+If your correct mapping file is already named `employee_map.json`, keep it in the same folder as `docker-compose.yml`:
+
+```bash
+ls -l employee_map.json
+```
+
+If your correct mapping file is currently named `employee_map copy.json`, copy it into the Docker-facing filename:
+
+```bash
+cp "employee_map copy.json" employee_map.json
+```
+
+Validate that the file is valid JSON:
+
+```bash
+python3 -m json.tool employee_map.json > /tmp/employee_map_checked.json
+```
+
+The file should look like this:
+
+```json
+{
+  "339": "339",
+  "269": "296",
+  "i36": "327",
+  "00001010": "276"
+}
+```
+
+In this format:
+
+- Left side: employee number coming from the Hikvision device.
+- Right side: employee ID in Frappe HRMS.
+- The same `employee_map.json` is used for punches coming from both PC A and PC B.
+- PC A and PC B do not need the mapping file for upload-only mode; they only send raw punch events.
+
+Docker Compose mounts this file into the container:
+
+```yaml
+./employee_map.json:/app/employee_map.json:ro
+```
+
+So whenever you edit the mapping on the Ubuntu server, restart the container:
+
+```bash
+docker compose restart punch-sync-server
+```
+
 Create the data folder and give it to the same non-root user used inside the container:
 
 ```bash
@@ -325,6 +377,12 @@ Expected result:
   "pending_events": 0
 }
 ```
+
+Important employee mapping rule:
+
+- The central server needs the correct `employee_map.json`.
+- If an employee number is missing from the map, that punch is skipped and logged.
+- After changing `employee_map.json`, restart the server.
 
 ## 5. Configure PC A
 

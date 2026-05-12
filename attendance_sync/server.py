@@ -20,7 +20,7 @@ sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
 from config import settings
 from hrms.frappe_client import FrappeClient
 from processors.event_processor import EventProcessor
-from storage.event_store import EventStore
+from storage.factory import create_event_store
 from transport.security import (
     NODE_HEADER,
     SIGNATURE_HEADER,
@@ -71,7 +71,7 @@ def _namespaced_event(source_node: str, event: dict[str, Any]) -> dict[str, Any]
 
 
 class EventIngestHandler(BaseHTTPRequestHandler):
-    store: EventStore
+    store: Any
 
     def log_message(self, format: str, *args: Any) -> None:
         logger.debug("HTTP: " + format, *args)
@@ -138,12 +138,12 @@ class EventIngestHandler(BaseHTTPRequestHandler):
         )
 
 
-def create_server(store: EventStore) -> ThreadingHTTPServer:
+def create_server(store: Any) -> ThreadingHTTPServer:
     EventIngestHandler.store = store
     return ThreadingHTTPServer((settings.SERVER_HOST, settings.SERVER_PORT), EventIngestHandler)
 
 
-def create_processor(store: EventStore) -> tuple[FrappeClient, EventProcessor]:
+def create_processor(store: Any) -> tuple[FrappeClient, EventProcessor]:
     if not settings.SERVER_NODE_KEYS:
         raise EnvironmentError("SERVER_NODE_KEYS must list at least one node_id:secret pair.")
     if not settings.HRMS_URL:
@@ -170,7 +170,7 @@ def create_processor(store: EventStore) -> tuple[FrappeClient, EventProcessor]:
     return frappe, processor
 
 
-def process_pending_events(store: EventStore, processor: EventProcessor) -> int:
+def process_pending_events(store: Any, processor: EventProcessor) -> int:
     rows = store.get_pending_inbound_events()
     if not rows:
         return 0
@@ -190,7 +190,7 @@ def main() -> None:
     signal.signal(signal.SIGINT, _handle_signal)
     signal.signal(signal.SIGTERM, _handle_signal)
 
-    store = EventStore(settings.STORE_PATH)
+    store = create_event_store()
     frappe, processor = create_processor(store)
     server = create_server(store)
     server_thread = threading.Thread(target=server.serve_forever, daemon=True)
