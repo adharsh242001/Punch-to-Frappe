@@ -1,4 +1,20 @@
 services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: punch-sync-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: punch_sync
+      POSTGRES_USER: punch_sync
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_this_postgres_password}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U punch_sync -d punch_sync"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   punch-sync-server:
     image: codeaceitsolutionsllp/punch-to-frappe:latest
     build:
@@ -12,8 +28,10 @@ services:
     ports:
       - "8080:8080"
     volumes:
-      - ./data:/app/data
       - ./employee_map.json:/app/employee_map.json:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
     healthcheck:
       test:
         [
@@ -26,3 +44,6 @@ services:
       timeout: 10s
       retries: 3
       start_period: 20s
+
+volumes:
+  postgres_data:

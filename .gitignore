@@ -120,6 +120,7 @@ celerybeat.pid
 .env
 .env.bak
 .env.server
+.env.compose
 .venv
 env/
 venv/

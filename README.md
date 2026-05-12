@@ -226,12 +226,13 @@ For an Ubuntu server, use the included Docker files:
 cp examples/env.server.docker.example .env.server
 cp "employee_map copy.json" employee_map.json
 python3 -m json.tool employee_map.json > /tmp/employee_map_checked.json
-mkdir -p data
-sudo chown -R 10001:10001 data
+export POSTGRES_PASSWORD='change_this_postgres_password'
 docker compose up -d --build
 ```
 
 Use the `cp "employee_map copy.json" employee_map.json` line only if `employee_map copy.json` is the correct final mapping. The central Docker server reads `employee_map.json` and mounts it into the container as read-only.
+
+The Docker server uses PostgreSQL by default. Set the same password in `POSTGRES_PASSWORD` and in `.env.server` `POSTGRES_DSN`.
 
 The Docker Hub image is:
 

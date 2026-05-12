@@ -143,6 +143,20 @@ Edit `.env.server`:
 nano .env.server
 ```
 
+Set the same Postgres password in two places:
+
+```bash
+export POSTGRES_PASSWORD='change_this_postgres_password'
+```
+
+And inside `.env.server`:
+
+```env
+POSTGRES_DSN=postgresql://punch_sync:change_this_postgres_password@postgres:5432/punch_sync
+```
+
+For production, replace `change_this_postgres_password` with a strong password in both places. Docker Compose uses `POSTGRES_PASSWORD` when creating the database container, and the app uses `POSTGRES_DSN` to connect to it.
+
 Generate PC keys:
 
 ```bash
@@ -203,11 +217,10 @@ So whenever you edit the mapping on the Ubuntu server, restart the container:
 docker compose restart punch-sync-server
 ```
 
-Create the data folder and give it to the same non-root user used inside the container:
+The Docker setup uses PostgreSQL for server storage. Data is stored in the Docker volume:
 
 ```bash
-mkdir -p data
-sudo chown -R 10001:10001 data
+docker volume ls | grep postgres
 ```
 
 Build and start:
@@ -256,6 +269,13 @@ docker compose down
 ```
 
 The container runs as UID/GID `10001:10001`, not root.
+
+The PostgreSQL tables store:
+
+- `inbound_events`: signed event batches received from PC A and PC B.
+- `processed_events`: serial numbers already handled.
+- `last_punch`: last punch per employee for duplicate-window checks.
+- `retry_queue`: Frappe pushes that failed temporarily and need retry.
 
 ### Docker Image Build In GitHub Actions
 
