@@ -125,4 +125,7 @@ EDGE_REQUEST_TIMEOUT: int = int(os.getenv("EDGE_REQUEST_TIMEOUT", "20"))
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO").upper()
-LOG_FILE: str | None = os.getenv("LOG_FILE")   # None → stdout only
+_LOG_FILE_RAW = os.getenv("LOG_FILE")
+LOG_FILE: Path | None = _root_relative_path(_LOG_FILE_RAW) if _LOG_FILE_RAW else None
+if LOG_FILE:
+    LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
