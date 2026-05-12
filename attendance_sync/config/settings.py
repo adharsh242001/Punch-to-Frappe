@@ -20,6 +20,14 @@ def _require(name: str) -> str:
     return value
 
 
+def _root_relative_path(value: str) -> Path:
+    """Resolve relative env paths from the project root, not process cwd."""
+    path = Path(value)
+    if path.is_absolute():
+        return path
+    return _ROOT / path
+
+
 # ── Hikvision devices ────────────────────────────────────────────────────────
 # List of IPs or "ip:user:pass" strings
 _DEVICES_RAW = os.getenv("DEVICES", "").split(",")
@@ -76,7 +84,7 @@ LATITUDE: str | None = os.getenv("LATITUDE")
 LONGITUDE: str | None = os.getenv("LONGITUDE")
 
 # ── Employee map ──────────────────────────────────────────────────────────────
-_MAP_PATH = Path(os.getenv("EMPLOYEE_MAP", str(_ROOT / "employee_map.json")))
+_MAP_PATH = _root_relative_path(os.getenv("EMPLOYEE_MAP", "employee_map.json"))
 
 def load_employee_map() -> dict[str, str]:
     if not _MAP_PATH.exists():
@@ -86,7 +94,7 @@ def load_employee_map() -> dict[str, str]:
 
 # ── Storage ───────────────────────────────────────────────────────────────────
 STORAGE_BACKEND: str = os.getenv("STORAGE_BACKEND", "sqlite").lower()
-STORE_PATH: Path = Path(os.getenv("STORE_PATH", str(_ROOT / "data" / "events.db")))
+STORE_PATH: Path = _root_relative_path(os.getenv("STORE_PATH", "data/events.db"))
 STORE_PATH.parent.mkdir(parents=True, exist_ok=True)
 POSTGRES_DSN: str = os.getenv("POSTGRES_DSN", "")
 
