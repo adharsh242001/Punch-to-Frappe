@@ -230,7 +230,7 @@ export POSTGRES_PASSWORD='change_this_postgres_password'
 # The dashboard's Configuration tab writes back into .env.server, so make the
 # file writable by uid 10001 (the container's appuser) before starting:
 chown 10001:10001 .env.server   # or: chmod 666 .env.server
-docker compose up -d --build
+docker compose up -d
 ```
 
 Once it's up, open the dashboard at `http://<server>:8080/` — you can fill in
@@ -252,6 +252,13 @@ After GitHub Actions pushes the image, an Ubuntu server can update with:
 ```bash
 docker compose pull
 docker compose up -d
+```
+
+That is the normal production update path. The main `docker-compose.yml` uses
+the published Docker Hub image. To build from the local checkout instead, run:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 ```
 
 Recommended layout:
@@ -313,6 +320,7 @@ Open `http://central-server-ip:8080/` in a browser. The dashboard shows:
 - Per-edge-node connection status (online / stale / offline / never connected) based on the last `/events` POST received
 - Recent inbound events, recently pushed checkins, and the retry queue
 - A **Push now** button that drains the queue and runs retries immediately
+- The last push run, including manual/automatic trigger, result breakdown, and retry count
 - A **Configuration** tab where you can edit `HRMS_URL`, `HRMS_API_KEY`, `HRMS_API_SECRET`, `SERVER_NODE_KEYS` (add/remove edge nodes), poll/dedup intervals, log level and storage settings. Edits are written back to `.env` (or the mounted `.env.server` in Docker); restart the server to apply.
 
 > The dashboard endpoints have no authentication — keep the server on a trusted LAN or put it behind a reverse proxy with auth.

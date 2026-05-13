@@ -183,13 +183,14 @@ class EventProcessor:
             longitude=settings.LONGITUDE,
         )
 
-    def process_retries(self) -> None:
+    def process_retries(self) -> int:
         """Drain the retry queue, re-pushing events that are now due."""
         due = self._store.get_due_retries(self._retry_max)
         if not due:
-            return
+            return 0
 
         logger.info("Processing %d retry item(s)…", len(due))
+        handled = 0
         for row in due:
             self._push_checkin(
                 hrms_id=row["employee_id"],
@@ -205,11 +206,14 @@ class EventProcessor:
                 latitude=settings.LATITUDE,
                 longitude=settings.LONGITUDE,
             )
+            handled += 1
 
         # Clean up permanently dead entries
         removed = self._store.purge_dead_retries(self._retry_max)
         if removed:
             logger.warning("Discarded %d event(s) that exceeded max retries.", removed)
+
+        return handled
 
     # ── internal helpers ──────────────────────────────────────────────────────
 

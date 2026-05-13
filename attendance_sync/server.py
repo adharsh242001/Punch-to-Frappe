@@ -47,6 +47,16 @@ _wake_event = threading.Event()
 
 _DASHBOARD_HTML_PATH = Path(__file__).resolve().parent / "dashboard.html"
 _ENV_PATH = Path(__file__).resolve().parent.parent / ".env"
+_last_push_lock = threading.Lock()
+_last_push: dict[str, Any] = {
+    "started_at": None,
+    "finished_at": None,
+    "processed": 0,
+    "retries": 0,
+    "results": {},
+    "error": None,
+    "trigger": None,
+}
 
 # Keys treated as secrets in the config API: masked in GET, blank-on-PUT means keep.
 _SECRET_KEYS = {"HRMS_API_KEY", "HRMS_API_SECRET", "POSTGRES_DSN"}
@@ -241,21 +251,60 @@ def _save_config(body: dict[str, Any]) -> list[str]:
     return list(updates.keys())
 
 
-def process_pending_events(store: Any, processor: EventProcessor) -> dict[str, int]:
+def process_pending_events(store: Any, processor: EventProcessor) -> dict[str, Any]:
     """Drain queued inbound events and run retry queue. Thread-safe."""
     with _push_lock:
         rows = store.get_pending_inbound_events()
         processed = 0
+        results: dict[str, int] = {}
         if rows:
             logger.info("Processing %d queued inbound event(s).", len(rows))
             for row in rows:
                 event = _namespaced_event(row["source_node"], row["payload"])
                 result = processor.process(event)
                 store.mark_inbound_processed(row["id"], result)
+                results[result] = results.get(result, 0) + 1
                 processed += 1
 
         retries = processor.process_retries()
-        return {"processed": processed, "retries": int(retries or 0)}
+        return {"processed": processed, "retries": int(retries or 0), "results": results}
+
+
+def run_push(store: Any, processor: EventProcessor, trigger: str) -> dict[str, Any]:
+    """Run a push cycle and remember the latest outcome for the dashboard."""
+    started_at = datetime.now(timezone.utc).isoformat()
+    try:
+        result = process_pending_events(store, processor)
+        snapshot = {
+            "started_at": started_at,
+            "finished_at": datetime.now(timezone.utc).isoformat(),
+            "processed": result["processed"],
+            "retries": result["retries"],
+            "results": result["results"],
+            "error": None,
+            "trigger": trigger,
+        }
+        with _last_push_lock:
+            _last_push.update(snapshot)
+        return {"ok": True, **result}
+    except Exception as exc:
+        snapshot = {
+            "started_at": started_at,
+            "finished_at": datetime.now(timezone.utc).isoformat(),
+            "processed": 0,
+            "retries": 0,
+            "results": {},
+            "error": str(exc),
+            "trigger": trigger,
+        }
+        with _last_push_lock:
+            _last_push.update(snapshot)
+        raise
+
+
+def latest_push_snapshot() -> dict[str, Any]:
+    with _last_push_lock:
+        return dict(_last_push)
 
 
 class EventIngestHandler(BaseHTTPRequestHandler):
@@ -300,9 +349,13 @@ class EventIngestHandler(BaseHTTPRequestHandler):
             self._handle_events_post()
             return
         if self.path == "/api/push":
-            result = process_pending_events(self.store, self.processor)
-            _wake_event.set()
-            _json_response(self, 200, {"ok": True, **result})
+            try:
+                result = run_push(self.store, self.processor, trigger="manual")
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("Manual push failed")
+                _json_response(self, 500, {"ok": False, "error": str(exc)})
+                return
+            _json_response(self, 200, result)
             return
         if self.path == "/api/config":
             self._handle_config_post()
@@ -415,6 +468,7 @@ class EventIngestHandler(BaseHTTPRequestHandler):
                 "processed_total": self.store.processed_count(),
                 "retry_queue": self.store.retry_queue_size(),
             },
+            "last_push": latest_push_snapshot(),
             "configured_nodes": sorted(settings.SERVER_NODE_KEYS.keys()),
             "nodes": _node_tracker.snapshot(),
         }
@@ -474,7 +528,10 @@ def main() -> None:
 
     try:
         while _running:
-            process_pending_events(store, processor)
+            try:
+                run_push(store, processor, trigger="automatic")
+            except Exception:  # noqa: BLE001
+                logger.exception("Automatic push cycle failed")
             # Sleep until POLL_INTERVAL elapses or a wake signal arrives.
             _wake_event.wait(timeout=settings.POLL_INTERVAL)
             _wake_event.clear()

@@ -17,9 +17,6 @@ services:
 
   punch-sync-server:
     image: codeaceitsolutionsllp/punch-to-frappe:latest
-    build:
-      context: .
-      dockerfile: Dockerfile
     container_name: punch-sync-server
     restart: unless-stopped
     user: "10001:10001"

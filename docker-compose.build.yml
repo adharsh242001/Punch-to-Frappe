@@ -1,0 +1,5 @@
+services:
+  punch-sync-server:
+    build:
+      context: .
+      dockerfile: Dockerfile

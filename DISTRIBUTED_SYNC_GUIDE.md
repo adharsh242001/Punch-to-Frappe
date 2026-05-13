@@ -223,17 +223,17 @@ The Docker setup uses PostgreSQL for server storage. Data is stored in the Docke
 docker volume ls | grep postgres
 ```
 
-Build and start:
-
-```bash
-docker compose up -d --build
-```
-
-If the image has already been pushed to Docker Hub and you want to pull it instead of building on the server:
+Pull the published image and start:
 
 ```bash
 docker compose pull
 docker compose up -d
+```
+
+If you are developing from this checkout and want to build locally on the server:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 ```
 
 Check status:
@@ -249,17 +249,17 @@ Health check:
 curl http://localhost:8080/health
 ```
 
-Update after pulling new code:
-
-```bash
-docker compose up -d --build
-```
-
 Update from Docker Hub:
 
 ```bash
 docker compose pull
 docker compose up -d
+```
+
+Rebuild from local source instead:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 ```
 
 Stop:
@@ -320,6 +320,11 @@ The compose file uses:
 ```text
 codeaceitsolutionsllp/punch-to-frappe:latest
 ```
+
+The default `docker-compose.yml` is meant for deployment from Docker Hub, so
+`docker compose pull && docker compose up -d` is enough after a new image is
+published. Use `docker-compose.build.yml` only when you intentionally want to
+build from files on that server.
 
 The workflow publishes these tags:
 
