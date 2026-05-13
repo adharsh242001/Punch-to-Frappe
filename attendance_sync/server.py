@@ -475,10 +475,21 @@ class EventIngestHandler(BaseHTTPRequestHandler):
         _json_response(self, 200, payload)
 
 
+class QuietThreadingHTTPServer(ThreadingHTTPServer):
+    """HTTP server that does not print tracebacks for client disconnects."""
+
+    def handle_error(self, request: Any, client_address: Any) -> None:
+        exc = sys.exc_info()[1]
+        if isinstance(exc, (BrokenPipeError, ConnectionResetError, ConnectionAbortedError)):
+            logger.debug("HTTP client disconnected early: %s", client_address)
+            return
+        super().handle_error(request, client_address)
+
+
 def create_server(store: Any, processor: EventProcessor) -> ThreadingHTTPServer:
     EventIngestHandler.store = store
     EventIngestHandler.processor = processor
-    return ThreadingHTTPServer((settings.SERVER_HOST, settings.SERVER_PORT), EventIngestHandler)
+    return QuietThreadingHTTPServer((settings.SERVER_HOST, settings.SERVER_PORT), EventIngestHandler)
 
 
 def create_processor(store: Any) -> tuple[FrappeClient, EventProcessor]:
