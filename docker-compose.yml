@@ -63,8 +63,12 @@ services:
       - |
         USERNAME="$${NGINX_BASIC_AUTH_USER:-admin}"
         PASSWORD="$${NGINX_BASIC_AUTH_PASSWORD:-change_this_dashboard_password}"
-        HASH="$$(openssl passwd -apr1 "$$PASSWORD")"
-        printf '%s:%s\n' "$$USERNAME" "$$HASH" > /etc/nginx/.htpasswd
+        HASH="$$(openssl passwd -1 "$${PASSWORD}")"
+        if [ -z "$${HASH}" ]; then
+          echo "Failed to generate nginx basic-auth password hash" >&2
+          exit 1
+        fi
+        printf '%s:%s\n' "$${USERNAME}" "$${HASH}" > /etc/nginx/.htpasswd
         nginx -g 'daemon off;'
     depends_on:
       punch-sync-server:
