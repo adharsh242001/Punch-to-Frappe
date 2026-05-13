@@ -3,6 +3,9 @@ Central attendance sync server.
 
 Receives signed event batches from edge PCs, stores them in SQLite, and pushes
 queued events to Frappe on the configured POLL_INTERVAL.
+
+Also serves a small dashboard at "/" with live status, recent events, retry
+queue, per-node connection status, and a manual "Push now" button.
 """
 import json
 import logging
@@ -10,7 +13,9 @@ import signal
 import sys
 import threading
 import time
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from typing import Any
 
 import os as _os
@@ -18,6 +23,7 @@ _os.chdir(_os.path.dirname(_os.path.abspath(__file__)))
 sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
 
 from config import settings
+from config.env_file import read_env, update_env
 from hrms.frappe_client import FrappeClient
 from processors.event_processor import EventProcessor
 from storage.factory import create_event_store
@@ -31,6 +37,70 @@ from transport.security import (
 
 logger = logging.getLogger(__name__)
 _running = True
+
+# Serialises pushes between the background loop and manual /api/push calls so
+# the same event is never processed by two threads at once.
+_push_lock = threading.Lock()
+
+# Wakes the background loop early (e.g. from a manual push or a fresh batch).
+_wake_event = threading.Event()
+
+_DASHBOARD_HTML_PATH = Path(__file__).resolve().parent / "dashboard.html"
+_ENV_PATH = Path(__file__).resolve().parent.parent / ".env"
+
+# Keys treated as secrets in the config API: masked in GET, blank-on-PUT means keep.
+_SECRET_KEYS = {"HRMS_API_KEY", "HRMS_API_SECRET", "POSTGRES_DSN"}
+
+# Whitelist of plain key/value config fields editable via the dashboard.
+_EDITABLE_KEYS = (
+    "HRMS_URL",
+    "HRMS_API_KEY",
+    "HRMS_API_SECRET",
+    "POLL_INTERVAL",
+    "DEDUP_WINDOW",
+    "LOG_LEVEL",
+    "SERVER_HOST",
+    "SERVER_PORT",
+    "STORAGE_BACKEND",
+    "POSTGRES_DSN",
+    "DEFAULT_LOG_TYPE",
+)
+
+
+class NodeTracker:
+    """In-memory record of which edge nodes have called /events recently."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._nodes: dict[str, dict[str, Any]] = {}
+
+    def record(self, node_id: str, accepted: int, inserted: int, skipped: int) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        with self._lock:
+            entry = self._nodes.setdefault(
+                node_id,
+                {"first_seen": now, "total_accepted": 0, "total_inserted": 0, "total_skipped": 0},
+            )
+            entry["last_seen"] = now
+            entry["last_accepted"] = accepted
+            entry["last_inserted"] = inserted
+            entry["last_skipped"] = skipped
+            entry["total_accepted"] += accepted
+            entry["total_inserted"] += inserted
+            entry["total_skipped"] += skipped
+
+    def record_unauthorized(self, node_id: str) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        with self._lock:
+            entry = self._nodes.setdefault(node_id or "(unknown)", {"first_seen": now})
+            entry["last_unauthorized_at"] = now
+
+    def snapshot(self) -> list[dict[str, Any]]:
+        with self._lock:
+            return [dict({"node_id": k}, **v) for k, v in self._nodes.items()]
+
+
+_node_tracker = NodeTracker()
 
 
 def _setup_logging() -> None:
@@ -50,15 +120,25 @@ def _handle_signal(signum, _frame) -> None:
     global _running
     logger.info("Received signal %d; shutting down gracefully.", signum)
     _running = False
+    _wake_event.set()
 
 
-def _json_response(handler: BaseHTTPRequestHandler, status: int, payload: dict[str, Any]) -> None:
-    body = json.dumps(payload).encode("utf-8")
+def _json_response(handler: BaseHTTPRequestHandler, status: int, payload: Any) -> None:
+    body = json.dumps(payload, default=str).encode("utf-8")
     handler.send_response(status)
     handler.send_header("Content-Type", "application/json")
     handler.send_header("Content-Length", str(len(body)))
     handler.end_headers()
     handler.wfile.write(body)
+
+
+def _html_response(handler: BaseHTTPRequestHandler, status: int, body: str) -> None:
+    encoded = body.encode("utf-8")
+    handler.send_response(status)
+    handler.send_header("Content-Type", "text/html; charset=utf-8")
+    handler.send_header("Content-Length", str(len(encoded)))
+    handler.end_headers()
+    handler.wfile.write(encoded)
 
 
 def _namespaced_event(source_node: str, event: dict[str, Any]) -> dict[str, Any]:
@@ -70,31 +150,204 @@ def _namespaced_event(source_node: str, event: dict[str, Any]) -> dict[str, Any]
     return normalized
 
 
+def _parse_node_keys(raw: str) -> list[dict[str, str]]:
+    nodes: list[dict[str, str]] = []
+    for entry in raw.split(","):
+        if ":" not in entry:
+            continue
+        node_id, secret = entry.split(":", 1)
+        node_id = node_id.strip()
+        secret = secret.strip()
+        if node_id:
+            nodes.append({"node_id": node_id, "secret": secret})
+    return nodes
+
+
+def _load_config_view() -> dict[str, Any]:
+    """Return current .env values with secrets masked, suitable for the UI."""
+    env = read_env(_ENV_PATH)
+    values: dict[str, Any] = {}
+    for key in _EDITABLE_KEYS:
+        raw = env.get(key, "")
+        if key in _SECRET_KEYS:
+            values[key] = {"set": bool(raw), "value": ""}
+        else:
+            values[key] = {"set": bool(raw), "value": raw}
+
+    nodes = [
+        {"node_id": n["node_id"], "secret_set": bool(n["secret"])}
+        for n in _parse_node_keys(env.get("SERVER_NODE_KEYS", ""))
+    ]
+    return {
+        "env_path": str(_ENV_PATH),
+        "values": values,
+        "nodes": nodes,
+    }
+
+
+def _save_config(body: dict[str, Any]) -> list[str]:
+    """
+    Persist user-supplied config changes to the .env file.
+
+    Body shape:
+      {
+        "values": {KEY: "new value", ...},
+        "nodes":  [{node_id, secret}, ...]      # full replacement of SERVER_NODE_KEYS
+      }
+    For secret keys, an empty/missing value means "keep existing". For node
+    secrets, an empty secret on an existing node means "keep its existing
+    secret"; a new node_id with empty secret is rejected.
+    """
+    incoming_values = body.get("values") or {}
+    if not isinstance(incoming_values, dict):
+        raise ValueError("values must be an object")
+
+    current = read_env(_ENV_PATH)
+    updates: dict[str, str] = {}
+
+    for key, new_value in incoming_values.items():
+        if key not in _EDITABLE_KEYS:
+            continue
+        new_value = "" if new_value is None else str(new_value)
+        if key in _SECRET_KEYS and new_value == "":
+            continue
+        updates[key] = new_value
+
+    if "nodes" in body:
+        nodes_in = body.get("nodes") or []
+        if not isinstance(nodes_in, list):
+            raise ValueError("nodes must be a list")
+        existing_secrets = {n["node_id"]: n["secret"] for n in _parse_node_keys(current.get("SERVER_NODE_KEYS", ""))}
+        merged: list[str] = []
+        for entry in nodes_in:
+            if not isinstance(entry, dict):
+                raise ValueError("each node must be an object")
+            node_id = str(entry.get("node_id", "")).strip()
+            secret = str(entry.get("secret", "")).strip()
+            if not node_id:
+                continue
+            if "," in node_id or ":" in node_id:
+                raise ValueError(f"node_id '{node_id}' may not contain ',' or ':'")
+            if not secret:
+                secret = existing_secrets.get(node_id, "")
+            if not secret:
+                raise ValueError(f"secret required for new node '{node_id}'")
+            if "," in secret:
+                raise ValueError(f"secret for '{node_id}' may not contain ','")
+            merged.append(f"{node_id}:{secret}")
+        updates["SERVER_NODE_KEYS"] = ",".join(merged)
+
+    update_env(_ENV_PATH, updates)
+    return list(updates.keys())
+
+
+def process_pending_events(store: Any, processor: EventProcessor) -> dict[str, int]:
+    """Drain queued inbound events and run retry queue. Thread-safe."""
+    with _push_lock:
+        rows = store.get_pending_inbound_events()
+        processed = 0
+        if rows:
+            logger.info("Processing %d queued inbound event(s).", len(rows))
+            for row in rows:
+                event = _namespaced_event(row["source_node"], row["payload"])
+                result = processor.process(event)
+                store.mark_inbound_processed(row["id"], result)
+                processed += 1
+
+        retries = processor.process_retries()
+        return {"processed": processed, "retries": int(retries or 0)}
+
+
 class EventIngestHandler(BaseHTTPRequestHandler):
     store: Any
+    processor: EventProcessor
 
     def log_message(self, format: str, *args: Any) -> None:
         logger.debug("HTTP: " + format, *args)
 
+    # ── routing ──────────────────────────────────────────────────────────────
+
     def do_GET(self) -> None:
-        if self.path != "/health":
-            _json_response(self, 404, {"error": "not_found"})
+        path = self.path.split("?", 1)[0]
+        if path == "/health":
+            _json_response(
+                self, 200,
+                {"ok": True, "pending_events": self.store.pending_inbound_count()},
+            )
+            return
+        if path in ("/", "/dashboard"):
+            self._serve_dashboard()
+            return
+        if path == "/api/status":
+            self._serve_status()
+            return
+        if path == "/api/events":
+            _json_response(self, 200, {"events": self.store.recent_inbound(100)})
+            return
+        if path == "/api/retries":
+            _json_response(self, 200, {"retries": self.store.get_retry_queue(100)})
+            return
+        if path == "/api/processed":
+            _json_response(self, 200, {"processed": self.store.recent_processed(100)})
+            return
+        if path == "/api/config":
+            _json_response(self, 200, _load_config_view())
+            return
+        _json_response(self, 404, {"error": "not_found"})
+
+    def do_POST(self) -> None:
+        if self.path == "/events":
+            self._handle_events_post()
+            return
+        if self.path == "/api/push":
+            result = process_pending_events(self.store, self.processor)
+            _wake_event.set()
+            _json_response(self, 200, {"ok": True, **result})
+            return
+        if self.path == "/api/config":
+            self._handle_config_post()
+            return
+        _json_response(self, 404, {"error": "not_found"})
+
+    def _handle_config_post(self) -> None:
+        length = int(self.headers.get("Content-Length", "0"))
+        raw = self.rfile.read(length)
+        try:
+            body = json.loads(raw.decode("utf-8")) if raw else {}
+        except json.JSONDecodeError:
+            _json_response(self, 400, {"error": "invalid_json"})
+            return
+
+        try:
+            written = _save_config(body)
+        except ValueError as exc:
+            _json_response(self, 400, {"error": str(exc)})
+            return
+        except PermissionError as exc:
+            _json_response(
+                self, 500,
+                {"error": f"cannot write {_ENV_PATH}: {exc}. "
+                          "In Docker, ensure the host file is writable by uid 10001 "
+                          "(e.g. `chown 10001:10001 .env.server` or `chmod 666 .env.server`)."},
+            )
+            return
+        except OSError as exc:
+            _json_response(self, 500, {"error": f"cannot write {_ENV_PATH}: {exc}"})
             return
 
         _json_response(
-            self,
-            200,
+            self, 200,
             {
                 "ok": True,
-                "pending_events": self.store.pending_inbound_count(),
+                "written_keys": sorted(written),
+                "restart_required": True,
+                "env_path": str(_ENV_PATH),
             },
         )
 
-    def do_POST(self) -> None:
-        if self.path != "/events":
-            _json_response(self, 404, {"error": "not_found"})
-            return
+    # ── handlers ─────────────────────────────────────────────────────────────
 
+    def _handle_events_post(self) -> None:
         content_length = int(self.headers.get("Content-Length", "0"))
         body = self.rfile.read(content_length)
 
@@ -108,6 +361,7 @@ class EventIngestHandler(BaseHTTPRequestHandler):
             body=body,
             allowed_secrets=settings.SERVER_NODE_KEYS,
         ):
+            _node_tracker.record_unauthorized(node_id)
             _json_response(self, 401, {"error": "unauthorized"})
             return
 
@@ -124,22 +378,52 @@ class EventIngestHandler(BaseHTTPRequestHandler):
 
         safe_events = [event for event in events if isinstance(event, dict)]
         inserted, skipped = self.store.enqueue_inbound_events(node_id, safe_events)
+        _node_tracker.record(node_id, len(safe_events), inserted, skipped)
         logger.info(
             "Received %d event(s) from %s: inserted=%d skipped=%d",
-            len(safe_events),
-            node_id,
-            inserted,
-            skipped,
+            len(safe_events), node_id, inserted, skipped,
         )
+        if inserted:
+            _wake_event.set()
         _json_response(
-            self,
-            202,
+            self, 202,
             {"accepted": len(safe_events), "inserted": inserted, "skipped": skipped},
         )
 
+    def _serve_dashboard(self) -> None:
+        try:
+            html = _DASHBOARD_HTML_PATH.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            _html_response(self, 500, "<h1>dashboard.html missing</h1>")
+            return
+        _html_response(self, 200, html)
 
-def create_server(store: Any) -> ThreadingHTTPServer:
+    def _serve_status(self) -> None:
+        counts = self.store.inbound_counts()
+        payload = {
+            "now": datetime.now(timezone.utc).isoformat(),
+            "server": {
+                "host": settings.SERVER_HOST,
+                "port": settings.SERVER_PORT,
+                "poll_interval": settings.POLL_INTERVAL,
+                "storage_backend": settings.STORAGE_BACKEND,
+                "hrms_url": settings.HRMS_URL,
+            },
+            "counts": {
+                "pending": counts.get("pending", 0),
+                "done": counts.get("done", 0),
+                "processed_total": self.store.processed_count(),
+                "retry_queue": self.store.retry_queue_size(),
+            },
+            "configured_nodes": sorted(settings.SERVER_NODE_KEYS.keys()),
+            "nodes": _node_tracker.snapshot(),
+        }
+        _json_response(self, 200, payload)
+
+
+def create_server(store: Any, processor: EventProcessor) -> ThreadingHTTPServer:
     EventIngestHandler.store = store
+    EventIngestHandler.processor = processor
     return ThreadingHTTPServer((settings.SERVER_HOST, settings.SERVER_PORT), EventIngestHandler)
 
 
@@ -170,21 +454,6 @@ def create_processor(store: Any) -> tuple[FrappeClient, EventProcessor]:
     return frappe, processor
 
 
-def process_pending_events(store: Any, processor: EventProcessor) -> int:
-    rows = store.get_pending_inbound_events()
-    if not rows:
-        return 0
-
-    logger.info("Processing %d queued inbound event(s).", len(rows))
-    for row in rows:
-        event = _namespaced_event(row["source_node"], row["payload"])
-        result = processor.process(event)
-        store.mark_inbound_processed(row["id"], result)
-
-    processor.process_retries()
-    return len(rows)
-
-
 def main() -> None:
     _setup_logging()
     signal.signal(signal.SIGINT, _handle_signal)
@@ -192,23 +461,23 @@ def main() -> None:
 
     store = create_event_store()
     frappe, processor = create_processor(store)
-    server = create_server(store)
+    server = create_server(store, processor)
     server_thread = threading.Thread(target=server.serve_forever, daemon=True)
     server_thread.start()
 
     logger.info(
-        "Central sync server listening on %s:%d; push interval=%ds",
-        settings.SERVER_HOST,
-        settings.SERVER_PORT,
+        "Central sync server listening on %s:%d; dashboard at http://%s:%d/  | push interval=%ds",
+        settings.SERVER_HOST, settings.SERVER_PORT,
+        settings.SERVER_HOST, settings.SERVER_PORT,
         settings.POLL_INTERVAL,
     )
 
     try:
         while _running:
             process_pending_events(store, processor)
-            deadline = time.monotonic() + settings.POLL_INTERVAL
-            while _running and time.monotonic() < deadline:
-                time.sleep(min(1.0, deadline - time.monotonic()))
+            # Sleep until POLL_INTERVAL elapses or a wake signal arrives.
+            _wake_event.wait(timeout=settings.POLL_INTERVAL)
+            _wake_event.clear()
     finally:
         logger.info("Stopping central sync server.")
         server.shutdown()

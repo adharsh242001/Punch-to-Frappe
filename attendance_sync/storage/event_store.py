@@ -281,6 +281,84 @@ class EventStore:
         row = cur.fetchone()
         return int(row["count"]) if row else 0
 
+    # ── dashboard helpers ────────────────────────────────────────────────────
+
+    def inbound_counts(self) -> dict[str, int]:
+        cur = self._conn().execute(
+            "SELECT status, COUNT(*) AS count FROM inbound_events GROUP BY status"
+        )
+        counts = {"pending": 0, "done": 0}
+        for row in cur.fetchall():
+            counts[row["status"]] = int(row["count"])
+        return counts
+
+    def processed_count(self) -> int:
+        cur = self._conn().execute("SELECT COUNT(*) AS count FROM processed_events")
+        row = cur.fetchone()
+        return int(row["count"]) if row else 0
+
+    def retry_queue_size(self) -> int:
+        cur = self._conn().execute("SELECT COUNT(*) AS count FROM retry_queue")
+        row = cur.fetchone()
+        return int(row["count"]) if row else 0
+
+    def recent_inbound(self, limit: int = 50) -> list[dict[str, Any]]:
+        cur = self._conn().execute(
+            """
+            SELECT id, source_node, payload, status, received_at, processed_at, last_result
+            FROM inbound_events
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+        rows = []
+        for row in cur.fetchall():
+            try:
+                payload = json.loads(row["payload"])
+            except Exception:
+                payload = {}
+            rows.append(
+                {
+                    "id": row["id"],
+                    "source_node": row["source_node"],
+                    "status": row["status"],
+                    "received_at": row["received_at"],
+                    "processed_at": row["processed_at"],
+                    "last_result": row["last_result"],
+                    "employee": payload.get("employeeNoString") or payload.get("employeeNo"),
+                    "device_ip": payload.get("deviceIP"),
+                    "event_time": payload.get("time"),
+                    "serial_no": payload.get("serialNo"),
+                }
+            )
+        return rows
+
+    def recent_processed(self, limit: int = 50) -> list[dict[str, Any]]:
+        cur = self._conn().execute(
+            """
+            SELECT serial_no, employee_no, device_ip, event_time, pushed_at
+            FROM processed_events
+            ORDER BY pushed_at DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+        return [dict(row) for row in cur.fetchall()]
+
+    def get_retry_queue(self, limit: int = 50) -> list[dict[str, Any]]:
+        cur = self._conn().execute(
+            """
+            SELECT id, employee_id, event_time, device_ip, serial_no, attempts,
+                   next_retry, last_error
+            FROM retry_queue
+            ORDER BY next_retry
+            LIMIT ?
+            """,
+            (limit,),
+        )
+        return [dict(row) for row in cur.fetchall()]
+
     @staticmethod
     def _source_event_id(event: dict[str, Any]) -> str:
         """Build a stable source id when the device serial number is missing."""

@@ -26,9 +26,14 @@ services:
     env_file:
       - .env.server
     ports:
+      # Dashboard + edge ingest endpoint: http://<host>:8080/
       - "8080:8080"
     volumes:
       - ./employee_map.json:/app/employee_map.json:ro
+      # Mount .env.server as /app/.env so the dashboard "Configuration" tab can
+      # persist edits back to the host file. Restart the container to apply.
+      # Must be writable by uid 10001 inside the container.
+      - ./.env.server:/app/.env
     depends_on:
       postgres:
         condition: service_healthy

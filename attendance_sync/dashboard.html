@@ -1,0 +1,479 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Attendance Sync — Dashboard</title>
+<style>
+  :root {
+    --bg: #0f1218;
+    --panel: #181c24;
+    --panel-2: #1f242e;
+    --text: #e6e8ec;
+    --muted: #8b94a3;
+    --accent: #4f8cff;
+    --good: #2ecc71;
+    --warn: #f1c40f;
+    --bad: #e74c3c;
+    --border: #2a313d;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg); color: var(--text);
+    margin: 0; padding: 1.5rem;
+  }
+  h1 { margin: 0 0 .25rem; font-size: 1.4rem; }
+  h2 { margin: 1.5rem 0 .5rem; font-size: 1.05rem; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+  .row { display: flex; flex-wrap: wrap; gap: 1rem; }
+  .card {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 8px; padding: 1rem; flex: 1 1 200px;
+  }
+  .stat { font-size: 1.8rem; font-weight: 600; }
+  .label { color: var(--muted); font-size: .8rem; text-transform: uppercase; letter-spacing: .05em; }
+  .pill {
+    display: inline-block; padding: 2px 8px; border-radius: 999px;
+    font-size: .75rem; font-weight: 600;
+  }
+  .pill.good { background: rgba(46,204,113,.15); color: var(--good); }
+  .pill.warn { background: rgba(241,196,15,.15); color: var(--warn); }
+  .pill.bad  { background: rgba(231,76,60,.15);  color: var(--bad); }
+  .pill.muted{ background: rgba(139,148,163,.15); color: var(--muted); }
+  table { width: 100%; border-collapse: collapse; font-size: .85rem; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 500; }
+  tbody tr:hover { background: var(--panel-2); }
+  button {
+    background: var(--accent); color: white; border: 0;
+    padding: 8px 14px; border-radius: 6px; cursor: pointer; font-size: .85rem;
+  }
+  button:hover { filter: brightness(1.1); }
+  button.ghost { background: transparent; border: 1px solid var(--border); color: var(--text); }
+  button.danger{ background: var(--bad); }
+  input, select {
+    background: var(--panel-2); border: 1px solid var(--border);
+    color: var(--text); padding: 6px 8px; border-radius: 5px; font-size: .85rem;
+    width: 100%;
+  }
+  label.field { display: block; margin: .5rem 0; font-size: .8rem; color: var(--muted); }
+  label.field span { display: block; margin-bottom: 2px; }
+  .actions { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
+  .toolbar { display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap; }
+  .tabs { display: flex; gap: .5rem; margin: 1rem 0; border-bottom: 1px solid var(--border); }
+  .tab { padding: 8px 14px; cursor: pointer; color: var(--muted); border-bottom: 2px solid transparent; }
+  .tab.active { color: var(--text); border-color: var(--accent); }
+  .hidden { display: none; }
+  .toast {
+    position: fixed; bottom: 1rem; right: 1rem; background: var(--panel-2);
+    border: 1px solid var(--border); padding: 10px 14px; border-radius: 6px;
+    box-shadow: 0 4px 20px rgba(0,0,0,.4); opacity: 0; transition: opacity .2s;
+    max-width: 400px;
+  }
+  .toast.show { opacity: 1; }
+  .toast.bad { border-color: var(--bad); }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+  @media (max-width: 700px) { .grid-2 { grid-template-columns: 1fr; } }
+  code, .mono { font-family: ui-monospace, "SF Mono", Consolas, monospace; font-size: .8em; }
+  .small { font-size: .8rem; color: var(--muted); }
+</style>
+</head>
+<body>
+
+<div class="toolbar">
+  <div>
+    <h1>Attendance Sync</h1>
+    <div class="small" id="server-info">…</div>
+  </div>
+  <div class="actions">
+    <span id="last-refresh" class="small">never refreshed</span>
+    <button class="ghost" onclick="refresh()">Refresh</button>
+    <button onclick="pushNow()">Push now</button>
+  </div>
+</div>
+
+<div class="tabs">
+  <div class="tab active" data-tab="overview" onclick="selectTab('overview')">Overview</div>
+  <div class="tab" data-tab="events"   onclick="selectTab('events')">Inbound Events</div>
+  <div class="tab" data-tab="processed" onclick="selectTab('processed')">Pushed to Frappe</div>
+  <div class="tab" data-tab="retries"  onclick="selectTab('retries')">Retry Queue</div>
+  <div class="tab" data-tab="config"   onclick="selectTab('config')">Configuration</div>
+</div>
+
+<!-- ── Overview tab ──────────────────────────────────────────────────────── -->
+<section id="tab-overview">
+  <div class="row">
+    <div class="card"><div class="label">Pending</div><div class="stat" id="stat-pending">–</div></div>
+    <div class="card"><div class="label">Processed (queue)</div><div class="stat" id="stat-done">–</div></div>
+    <div class="card"><div class="label">Pushed to Frappe</div><div class="stat" id="stat-processed">–</div></div>
+    <div class="card"><div class="label">Retry queue</div><div class="stat" id="stat-retries">–</div></div>
+  </div>
+
+  <h2>Edge Nodes</h2>
+  <div class="card">
+    <table>
+      <thead>
+        <tr><th>Node ID</th><th>Status</th><th>Last seen</th><th>Last batch</th><th>Totals</th></tr>
+      </thead>
+      <tbody id="nodes-tbody">
+        <tr><td colspan="5" class="small">no data yet</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ── Events tab ────────────────────────────────────────────────────────── -->
+<section id="tab-events" class="hidden">
+  <h2>Most recent inbound events</h2>
+  <div class="card">
+    <table>
+      <thead>
+        <tr>
+          <th>ID</th><th>Status</th><th>Node</th><th>Employee</th>
+          <th>Device</th><th>Event time</th><th>Received</th><th>Result</th>
+        </tr>
+      </thead>
+      <tbody id="events-tbody"></tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ── Processed tab ─────────────────────────────────────────────────────── -->
+<section id="tab-processed" class="hidden">
+  <h2>Most recently pushed to Frappe</h2>
+  <div class="card">
+    <table>
+      <thead>
+        <tr><th>Serial No</th><th>Employee</th><th>Device IP</th><th>Event time</th><th>Pushed at</th></tr>
+      </thead>
+      <tbody id="processed-tbody"></tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ── Retries tab ───────────────────────────────────────────────────────── -->
+<section id="tab-retries" class="hidden">
+  <h2>Retry queue</h2>
+  <div class="card">
+    <table>
+      <thead>
+        <tr>
+          <th>ID</th><th>Employee</th><th>Device IP</th><th>Event time</th>
+          <th>Attempts</th><th>Next retry</th><th>Last error</th>
+        </tr>
+      </thead>
+      <tbody id="retries-tbody"></tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ── Config tab ────────────────────────────────────────────────────────── -->
+<section id="tab-config" class="hidden">
+  <h2>Configuration <span class="small">(writes to <code id="env-path">.env</code> — restart server to apply)</span></h2>
+
+  <div class="grid-2">
+    <div class="card">
+      <h3 style="margin-top:0">Frappe HRMS</h3>
+      <label class="field"><span>HRMS URL</span>
+        <input id="cfg-HRMS_URL" placeholder="https://hrms.example.com" />
+      </label>
+      <label class="field"><span>HRMS API key <em id="hint-HRMS_API_KEY" class="small"></em></span>
+        <input id="cfg-HRMS_API_KEY" type="password" placeholder="leave blank to keep current" />
+      </label>
+      <label class="field"><span>HRMS API secret <em id="hint-HRMS_API_SECRET" class="small"></em></span>
+        <input id="cfg-HRMS_API_SECRET" type="password" placeholder="leave blank to keep current" />
+      </label>
+      <label class="field"><span>Default log type</span>
+        <input id="cfg-DEFAULT_LOG_TYPE" placeholder="IN" />
+      </label>
+    </div>
+
+    <div class="card">
+      <h3 style="margin-top:0">Server</h3>
+      <label class="field"><span>Bind host</span><input id="cfg-SERVER_HOST" /></label>
+      <label class="field"><span>Bind port</span><input id="cfg-SERVER_PORT" /></label>
+      <label class="field"><span>Poll interval (seconds)</span><input id="cfg-POLL_INTERVAL" /></label>
+      <label class="field"><span>Dedup window (seconds)</span><input id="cfg-DEDUP_WINDOW" /></label>
+      <label class="field"><span>Log level</span>
+        <select id="cfg-LOG_LEVEL">
+          <option>DEBUG</option><option>INFO</option><option>WARNING</option><option>ERROR</option>
+        </select>
+      </label>
+    </div>
+
+    <div class="card">
+      <h3 style="margin-top:0">Storage</h3>
+      <label class="field"><span>Backend</span>
+        <select id="cfg-STORAGE_BACKEND">
+          <option value="sqlite">sqlite</option>
+          <option value="postgres">postgres</option>
+        </select>
+      </label>
+      <label class="field"><span>Postgres DSN <em id="hint-POSTGRES_DSN" class="small"></em></span>
+        <input id="cfg-POSTGRES_DSN" type="password" placeholder="leave blank to keep current" />
+      </label>
+    </div>
+
+    <div class="card">
+      <h3 style="margin-top:0">Edge Node Keys</h3>
+      <div class="small">Each edge PC has a node_id and a shared secret used to sign requests.</div>
+      <table>
+        <thead><tr><th>Node ID</th><th>Secret</th><th></th></tr></thead>
+        <tbody id="nodes-edit-tbody"></tbody>
+      </table>
+      <div style="margin-top:.75rem" class="actions">
+        <input id="new-node-id" placeholder="node_id (e.g. pc-a)" style="max-width:180px"/>
+        <input id="new-node-secret" placeholder="shared secret" type="text" style="max-width:240px"/>
+        <button class="ghost" onclick="addNodeRow()">Add node</button>
+      </div>
+    </div>
+  </div>
+
+  <div style="margin-top:1rem" class="actions">
+    <button onclick="saveConfig()">Save configuration</button>
+    <span class="small">After saving, restart the central server to load the new values.</span>
+  </div>
+</section>
+
+<div id="toast" class="toast"></div>
+
+<script>
+let CONFIG_CACHE = null;
+let NODES_EDIT = [];   // [{node_id, secret_set, secret_new}]
+
+function selectTab(name) {
+  document.querySelectorAll(".tab").forEach(t => {
+    t.classList.toggle("active", t.dataset.tab === name);
+  });
+  ["overview","events","processed","retries","config"].forEach(t => {
+    document.getElementById("tab-" + t).classList.toggle("hidden", t !== name);
+  });
+  if (name === "config" && !CONFIG_CACHE) loadConfig();
+}
+
+function toast(msg, bad=false) {
+  const el = document.getElementById("toast");
+  el.textContent = msg;
+  el.classList.toggle("bad", bad);
+  el.classList.add("show");
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => el.classList.remove("show"), 3500);
+}
+
+async function fetchJSON(url, opts) {
+  const res = await fetch(url, opts);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || (res.status + " " + res.statusText));
+  return data;
+}
+
+function fmtTime(iso) {
+  if (!iso) return "—";
+  try { return new Date(iso).toLocaleString(); } catch { return iso; }
+}
+function escape(v) {
+  if (v === undefined || v === null) return "";
+  return String(v).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+
+async function refresh() {
+  try {
+    const [status, events, processed, retries] = await Promise.all([
+      fetchJSON("/api/status"),
+      fetchJSON("/api/events"),
+      fetchJSON("/api/processed"),
+      fetchJSON("/api/retries"),
+    ]);
+    renderStatus(status);
+    renderEvents(events.events || []);
+    renderProcessed(processed.processed || []);
+    renderRetries(retries.retries || []);
+    document.getElementById("last-refresh").textContent =
+      "refreshed " + new Date().toLocaleTimeString();
+  } catch (err) {
+    toast("Refresh failed: " + err.message, true);
+  }
+}
+
+function renderStatus(s) {
+  document.getElementById("server-info").textContent =
+    `bind ${s.server.host}:${s.server.port}  ·  storage ${s.server.storage_backend}  ·  Frappe ${s.server.hrms_url || "(not set)"}  ·  push every ${s.server.poll_interval}s`;
+  document.getElementById("stat-pending").textContent  = s.counts.pending;
+  document.getElementById("stat-done").textContent     = s.counts.done;
+  document.getElementById("stat-processed").textContent= s.counts.processed_total;
+  document.getElementById("stat-retries").textContent  = s.counts.retry_queue;
+
+  const tbody = document.getElementById("nodes-tbody");
+  const configured = new Set(s.configured_nodes);
+  const seen = new Set();
+  const rows = [];
+
+  for (const n of s.nodes) {
+    seen.add(n.node_id);
+    const status = healthFromLastSeen(n.last_seen);
+    rows.push(`
+      <tr>
+        <td><code>${escape(n.node_id)}</code></td>
+        <td><span class="pill ${status.cls}">${status.label}</span></td>
+        <td>${fmtTime(n.last_seen)}</td>
+        <td>${n.last_inserted ?? 0} new / ${n.last_skipped ?? 0} dup (${n.last_accepted ?? 0} total)</td>
+        <td>${n.total_inserted ?? 0} pushed · ${n.total_skipped ?? 0} duplicates</td>
+      </tr>`);
+  }
+  for (const nid of s.configured_nodes) {
+    if (seen.has(nid)) continue;
+    rows.push(`
+      <tr>
+        <td><code>${escape(nid)}</code></td>
+        <td><span class="pill muted">never connected</span></td>
+        <td>—</td><td>—</td><td>—</td>
+      </tr>`);
+  }
+  if (rows.length === 0) {
+    rows.push(`<tr><td colspan="5" class="small">no nodes configured — add one in the Configuration tab</td></tr>`);
+  }
+  tbody.innerHTML = rows.join("");
+}
+
+function healthFromLastSeen(iso) {
+  if (!iso) return { cls: "muted", label: "no data" };
+  const ageMs = Date.now() - new Date(iso).getTime();
+  const mins = ageMs / 60000;
+  if (mins < 5)  return { cls: "good", label: "online" };
+  if (mins < 30) return { cls: "warn", label: "stale" };
+  return { cls: "bad", label: "offline" };
+}
+
+function renderEvents(rows) {
+  document.getElementById("events-tbody").innerHTML = rows.length === 0
+    ? `<tr><td colspan="8" class="small">no events yet</td></tr>`
+    : rows.map(r => `
+      <tr>
+        <td>${r.id}</td>
+        <td><span class="pill ${r.status === 'done' ? 'good' : 'warn'}">${escape(r.status)}</span></td>
+        <td><code>${escape(r.source_node)}</code></td>
+        <td>${escape(r.employee)}</td>
+        <td><code>${escape(r.device_ip)}</code></td>
+        <td>${escape(r.event_time)}</td>
+        <td>${fmtTime(r.received_at)}</td>
+        <td class="small">${escape(r.last_result || "")}</td>
+      </tr>`).join("");
+}
+
+function renderProcessed(rows) {
+  document.getElementById("processed-tbody").innerHTML = rows.length === 0
+    ? `<tr><td colspan="5" class="small">nothing pushed yet</td></tr>`
+    : rows.map(r => `
+      <tr>
+        <td><code>${escape(r.serial_no)}</code></td>
+        <td>${escape(r.employee_no)}</td>
+        <td><code>${escape(r.device_ip)}</code></td>
+        <td>${escape(r.event_time)}</td>
+        <td>${fmtTime(r.pushed_at)}</td>
+      </tr>`).join("");
+}
+
+function renderRetries(rows) {
+  document.getElementById("retries-tbody").innerHTML = rows.length === 0
+    ? `<tr><td colspan="7" class="small">retry queue is empty</td></tr>`
+    : rows.map(r => `
+      <tr>
+        <td>${r.id}</td>
+        <td>${escape(r.employee_id)}</td>
+        <td><code>${escape(r.device_ip)}</code></td>
+        <td>${escape(r.event_time)}</td>
+        <td>${r.attempts}</td>
+        <td>${fmtTime(r.next_retry)}</td>
+        <td class="small">${escape(r.last_error || "")}</td>
+      </tr>`).join("");
+}
+
+async function pushNow() {
+  try {
+    const r = await fetchJSON("/api/push", { method: "POST" });
+    toast(`Pushed ${r.processed} event(s). Retries handled: ${r.retries}.`);
+    refresh();
+  } catch (err) {
+    toast("Push failed: " + err.message, true);
+  }
+}
+
+async function loadConfig() {
+  try {
+    const cfg = await fetchJSON("/api/config");
+    CONFIG_CACHE = cfg;
+    document.getElementById("env-path").textContent = cfg.env_path;
+    for (const [key, info] of Object.entries(cfg.values)) {
+      const el = document.getElementById("cfg-" + key);
+      if (!el) continue;
+      el.value = info.value || "";
+      const hint = document.getElementById("hint-" + key);
+      if (hint) hint.textContent = info.set ? "(currently set)" : "(not set)";
+    }
+    NODES_EDIT = cfg.nodes.map(n => ({ node_id: n.node_id, secret_set: n.secret_set, secret_new: "" }));
+    renderNodesEdit();
+  } catch (err) {
+    toast("Load config failed: " + err.message, true);
+  }
+}
+
+function renderNodesEdit() {
+  const tbody = document.getElementById("nodes-edit-tbody");
+  if (NODES_EDIT.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="3" class="small">no edge nodes — add one below</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = NODES_EDIT.map((n, i) => `
+    <tr>
+      <td><code>${escape(n.node_id)}</code></td>
+      <td>
+        <input type="text" value="${escape(n.secret_new)}"
+               placeholder="${n.secret_set ? 'leave blank to keep' : 'enter secret'}"
+               onchange="NODES_EDIT[${i}].secret_new = this.value" />
+      </td>
+      <td><button class="danger" onclick="removeNodeRow(${i})">Remove</button></td>
+    </tr>`).join("");
+}
+
+function addNodeRow() {
+  const id = document.getElementById("new-node-id").value.trim();
+  const secret = document.getElementById("new-node-secret").value.trim();
+  if (!id) { toast("node_id is required", true); return; }
+  if (!secret) { toast("secret is required for new node", true); return; }
+  if (NODES_EDIT.some(n => n.node_id === id)) { toast("node_id already exists", true); return; }
+  NODES_EDIT.push({ node_id: id, secret_set: false, secret_new: secret });
+  document.getElementById("new-node-id").value = "";
+  document.getElementById("new-node-secret").value = "";
+  renderNodesEdit();
+}
+
+function removeNodeRow(i) {
+  NODES_EDIT.splice(i, 1);
+  renderNodesEdit();
+}
+
+async function saveConfig() {
+  const values = {};
+  for (const key of Object.keys(CONFIG_CACHE.values)) {
+    const el = document.getElementById("cfg-" + key);
+    if (!el) continue;
+    values[key] = el.value;
+  }
+  const nodes = NODES_EDIT.map(n => ({ node_id: n.node_id, secret: n.secret_new || "" }));
+  try {
+    const r = await fetchJSON("/api/config", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ values, nodes }),
+    });
+    toast(`Saved ${r.written_keys.length} key(s). Restart server to apply.`);
+    loadConfig();
+  } catch (err) {
+    toast("Save failed: " + err.message, true);
+  }
+}
+
+refresh();
+setInterval(refresh, 10000);
+</script>
+</body>
+</html>
