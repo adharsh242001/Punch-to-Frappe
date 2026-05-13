@@ -224,6 +224,7 @@ For an Ubuntu server, use the included Docker files:
 
 ```bash
 cp examples/env.server.docker.example .env.server
+cp examples/env.compose.example .env
 cp "employee_map copy.json" employee_map.json
 python3 -m json.tool employee_map.json > /tmp/employee_map_checked.json
 export POSTGRES_PASSWORD='change_this_postgres_password'
@@ -233,9 +234,11 @@ chown 10001:10001 .env.server   # or: chmod 666 .env.server
 docker compose up -d
 ```
 
-Once it's up, open the dashboard at `http://<server>:8080/` — you can fill in
-Frappe URL/key/secret and add edge node keys directly from the Configuration
-tab, then run `docker compose restart punch-sync-server` to apply.
+Edit `.env` and change `NGINX_BASIC_AUTH_PASSWORD` before exposing the server.
+Once it's up, open the dashboard at `http://<server>:8090/` and log in with the
+Nginx username/password from `.env`. You can fill in Frappe URL/key/secret and
+add edge node keys directly from the Configuration tab, then run
+`docker compose restart punch-sync-server` to apply.
 
 Use the `cp "employee_map copy.json" employee_map.json` line only if `employee_map copy.json` is the correct final mapping. The central Docker server reads `employee_map.json` and mounts it into the container as read-only.
 
@@ -309,12 +312,12 @@ What it does:
 Health check:
 
 ```powershell
-Invoke-RestMethod http://central-server-ip:8080/health
+Invoke-RestMethod http://central-server-ip:8090/health
 ```
 
 ### Web Dashboard
 
-Open `http://central-server-ip:8080/` in a browser. The dashboard shows:
+Open `http://central-server-ip:8090/` in a browser. The dashboard shows:
 
 - Pending / pushed / retry counters
 - Per-edge-node connection status (online / stale / offline / never connected) based on the last `/events` POST received
@@ -323,7 +326,9 @@ Open `http://central-server-ip:8080/` in a browser. The dashboard shows:
 - The last push run, including manual/automatic trigger, result breakdown, and retry count
 - A **Configuration** tab where you can edit `HRMS_URL`, `HRMS_API_KEY`, `HRMS_API_SECRET`, `SERVER_NODE_KEYS` (add/remove edge nodes), poll/dedup intervals, log level and storage settings. Edits are written back to `.env` (or the mounted `.env.server` in Docker); restart the server to apply.
 
-> The dashboard endpoints have no authentication — keep the server on a trusted LAN or put it behind a reverse proxy with auth.
+In Docker, Nginx protects the dashboard and `/api/*` with basic auth. The
+`/events` endpoint stays reachable without basic auth because edge PCs already
+sign uploads with HMAC.
 
 ### PC A / PC B Edge Setup
 
@@ -336,7 +341,7 @@ DEVICES=10.10.10.166,10.10.10.128
 DEVICE_USER=admin
 DEVICE_PASS=your_device_password
 
-SYNC_SERVER_URL=http://central-server-ip:8080
+SYNC_SERVER_URL=http://central-server-ip:8090
 EDGE_NODE_ID=pc-a
 EDGE_NODE_SECRET=long_random_secret_for_a
 POLL_INTERVAL=600
@@ -350,7 +355,7 @@ DEVICES=10.10.20.50,10.10.20.51
 DEVICE_USER=admin
 DEVICE_PASS=your_device_password
 
-SYNC_SERVER_URL=http://central-server-ip:8080
+SYNC_SERVER_URL=http://central-server-ip:8090
 EDGE_NODE_ID=pc-b
 EDGE_NODE_SECRET=long_random_secret_for_b
 POLL_INTERVAL=600

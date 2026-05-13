@@ -135,12 +135,27 @@ Create the server env file:
 
 ```bash
 cp examples/env.server.docker.example .env.server
+cp examples/env.compose.example .env
 ```
 
-Edit `.env.server`:
+Edit `.env.server` for Frappe, storage, and edge node settings:
 
 ```bash
 nano .env.server
+```
+
+Edit `.env` for the public port and dashboard login:
+
+```bash
+nano .env
+```
+
+At minimum, change:
+
+```env
+DASHBOARD_PORT=8090
+NGINX_BASIC_AUTH_USER=admin
+NGINX_BASIC_AUTH_PASSWORD=change_this_dashboard_password
 ```
 
 Set the same Postgres password in two places:
@@ -241,12 +256,13 @@ Check status:
 ```bash
 docker compose ps
 docker compose logs -f punch-sync-server
+docker compose logs -f nginx
 ```
 
 Health check:
 
 ```bash
-curl http://localhost:8080/health
+curl http://localhost:8090/health
 ```
 
 Update from Docker Hub:
@@ -276,6 +292,14 @@ The PostgreSQL tables store:
 - `processed_events`: serial numbers already handled.
 - `last_punch`: last punch per employee for duplicate-window checks.
 - `retry_queue`: Frappe pushes that failed temporarily and need retry.
+
+Nginx is the public entrypoint:
+
+- Public URL: `http://<server>:8090/` by default.
+- Change the public port with `DASHBOARD_PORT` in `.env`.
+- Dashboard and `/api/*` require the Nginx username/password from `.env`.
+- `/events` does not use basic auth so PC A and PC B can upload normally; those uploads are still protected by HMAC signatures.
+- The Python app is internal to Docker on port `8080`.
 
 ### Docker Image Build In GitHub Actions
 
@@ -428,7 +452,7 @@ DEVICES=10.10.10.166,10.10.10.128
 DEVICE_USER=admin
 DEVICE_PASS=your_device_password
 
-SYNC_SERVER_URL=http://central-server-ip:8080
+SYNC_SERVER_URL=http://central-server-ip:8090
 EDGE_NODE_ID=pc-a
 EDGE_NODE_SECRET=change_this_to_a_long_random_secret_for_pc_a
 
@@ -475,7 +499,7 @@ DEVICES=10.10.20.50,10.10.20.51
 DEVICE_USER=admin
 DEVICE_PASS=your_device_password
 
-SYNC_SERVER_URL=http://central-server-ip:8080
+SYNC_SERVER_URL=http://central-server-ip:8090
 EDGE_NODE_ID=pc-b
 EDGE_NODE_SECRET=change_this_to_a_long_random_secret_for_pc_b
 
@@ -506,13 +530,13 @@ Test in this order.
 From PC A or PC B, run:
 
 ```powershell
-Invoke-RestMethod http://central-server-ip:8080/health
+Invoke-RestMethod http://central-server-ip:8090/health
 ```
 
 If this fails, check:
 
 - Central server is running.
-- Windows Firewall allows inbound port `8080`.
+- Windows Firewall allows inbound port `8090`.
 - PC A and PC B can reach the central server IP.
 
 ### Edge Device Test
