@@ -135,25 +135,17 @@ Create the server env file:
 
 ```bash
 cp examples/env.server.docker.example .env.server
-cp examples/env.compose.example .env
 ```
 
-Edit `.env.server` for Frappe, storage, and edge node settings:
+Edit `.env.server` for Frappe, storage, edge node settings, and the dashboard login:
 
 ```bash
 nano .env.server
 ```
 
-Edit `.env` for the public port and dashboard login:
-
-```bash
-nano .env
-```
-
 At minimum, change:
 
 ```env
-DASHBOARD_PORT=8090
 NGINX_BASIC_AUTH_USER=admin
 NGINX_BASIC_AUTH_PASSWORD=change_this_dashboard_password
 ```
@@ -296,8 +288,8 @@ The PostgreSQL tables store:
 Nginx is the public entrypoint:
 
 - Public URL: `http://<server>:8090/` by default.
-- Change the public port with `DASHBOARD_PORT` in `.env`.
-- Dashboard and `/api/*` require the Nginx username/password from `.env`.
+- Change the public port with `DASHBOARD_PORT` in a Docker Compose `.env` file, or leave it at `8090`.
+- Dashboard and `/api/*` require the Nginx username/password from `.env.server`.
 - `/events` does not use basic auth so PC A and PC B can upload normally; those uploads are still protected by HMAC signatures.
 - The Python app is internal to Docker on port `8080`.
 

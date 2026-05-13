@@ -50,19 +50,18 @@ services:
     image: nginx:1.27-alpine
     container_name: punch-sync-nginx
     restart: unless-stopped
+    env_file:
+      - .env.server
     ports:
       # Public dashboard + edge ingest endpoint: http://<host>:8090/
       - "${DASHBOARD_PORT:-8090}:80"
-    environment:
-      NGINX_BASIC_AUTH_USER: ${NGINX_BASIC_AUTH_USER:-admin}
-      NGINX_BASIC_AUTH_PASSWORD: ${NGINX_BASIC_AUTH_PASSWORD:-change_this_dashboard_password}
     volumes:
       - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
     command:
       [
         "sh",
         "-c",
-        "printf '%s:%s\n' \"$${NGINX_BASIC_AUTH_USER}\" \"$$(openssl passwd -apr1 \"$${NGINX_BASIC_AUTH_PASSWORD}\")\" > /etc/nginx/.htpasswd && nginx -g 'daemon off;'",
+        ": $${NGINX_BASIC_AUTH_USER:=admin}; : $${NGINX_BASIC_AUTH_PASSWORD:=change_this_dashboard_password}; printf '%s:%s\n' \"$${NGINX_BASIC_AUTH_USER}\" \"$$(openssl passwd -apr1 \"$${NGINX_BASIC_AUTH_PASSWORD}\")\" > /etc/nginx/.htpasswd && nginx -g 'daemon off;'",
       ]
     depends_on:
       punch-sync-server:
