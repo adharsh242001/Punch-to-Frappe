@@ -86,6 +86,10 @@ LONGITUDE: str | None = os.getenv("LONGITUDE")
 # ── Employee map ──────────────────────────────────────────────────────────────
 _MAP_PATH = _root_relative_path(os.getenv("EMPLOYEE_MAP", "employee_map.json"))
 
+def employee_map_path() -> Path:
+    return _MAP_PATH
+
+
 def load_employee_map() -> dict[str, str]:
     if not _MAP_PATH.exists():
         raise FileNotFoundError(f"employee_map.json not found at {_MAP_PATH}")

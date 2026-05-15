@@ -228,8 +228,10 @@ cp "employee_map copy.json" employee_map.json
 python3 -m json.tool employee_map.json > /tmp/employee_map_checked.json
 export POSTGRES_PASSWORD='change_this_postgres_password'
 # The dashboard's Configuration tab writes back into .env.server, so make the
-# file writable by uid 10001 (the container's appuser) before starting:
+# file writable by uid 10001 (the container's appuser) before starting.
+# The Employee Map tab also writes back to employee_map.json:
 chown 10001:10001 .env.server   # or: chmod 666 .env.server
+chown 10001:10001 employee_map.json
 docker compose up -d
 ```
 
@@ -239,7 +241,7 @@ Nginx username/password from `.env.server`. You can fill in Frappe URL/key/secre
 add edge node keys directly from the Configuration tab, then run
 `docker compose restart punch-sync-server` to apply.
 
-Use the `cp "employee_map copy.json" employee_map.json` line only if `employee_map copy.json` is the correct final mapping. The central Docker server reads `employee_map.json` and mounts it into the container as read-only.
+Use the `cp "employee_map copy.json" employee_map.json` line only if `employee_map copy.json` is the correct final mapping. The central Docker server reads `employee_map.json` and mounts it into the container read-write so the dashboard can save mapping edits.
 
 The Docker server uses PostgreSQL by default. Set the same password in `POSTGRES_PASSWORD` and in `.env.server` `POSTGRES_DSN`.
 
@@ -324,6 +326,7 @@ Open `http://central-server-ip:8090/` in a browser. The dashboard shows:
 - Recent inbound events, recently pushed checkins, and the retry queue
 - A **Push now** button that drains the queue and runs retries immediately
 - The last push run, including manual/automatic trigger, result breakdown, and retry count
+- An **Employee Map** tab for adding, editing, searching, and removing device employee number to Frappe employee ID mappings. Restart the server after saving so the processor reloads the map.
 - A **Configuration** tab where you can edit `HRMS_URL`, `HRMS_API_KEY`, `HRMS_API_SECRET`, `SERVER_NODE_KEYS` (add/remove edge nodes), poll/dedup intervals, log level and storage settings. Edits are written back to `.env` (or the mounted `.env.server` in Docker); restart the server to apply.
 
 In Docker, Nginx protects the dashboard and `/api/*` with basic auth from

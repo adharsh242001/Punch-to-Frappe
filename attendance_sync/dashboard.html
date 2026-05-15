@@ -205,6 +205,7 @@
       <button class="tab" data-tab="processed" onclick="showTab('processed')">Pushed</button>
       <button class="tab" data-tab="retries" onclick="showTab('retries')">Retries</button>
       <button class="tab" data-tab="manual" onclick="showTab('manual')">Manual Range</button>
+      <button class="tab" data-tab="employee-map" onclick="showTab('employee-map')">Employee Map</button>
       <button class="tab" data-tab="config" onclick="showTab('config')">Configuration</button>
     </nav>
   </div>
@@ -316,6 +317,29 @@
     </div>
   </section>
 
+  <section id="panel-employee-map" class="hidden">
+    <div class="card">
+      <div class="topbar" style="margin-bottom:12px">
+        <div>
+          <h2>Employee Map</h2>
+          <div id="employeeMapPath" class="subtle">Map path loading...</div>
+        </div>
+        <div class="actions">
+          <input id="employeeMapFilter" placeholder="Search employee no or Frappe ID" oninput="renderEmployeeMap()" style="width:260px" />
+          <button class="secondary" onclick="loadEmployeeMap()">Reload</button>
+          <button class="secondary" onclick="addEmployeeMapRow()">Add Row</button>
+          <button onclick="saveEmployeeMap()">Save Map</button>
+        </div>
+      </div>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>Device Employee No</th><th>Frappe Employee ID</th><th></th></tr></thead>
+          <tbody id="employeeMapBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
   <section id="panel-config" class="hidden">
     <div class="grid cards">
       <div class="card">
@@ -371,6 +395,7 @@
 <script>
 let configCache = null;
 let nodeEdits = [];
+let employeeMapEntries = [];
 
 const cfgKeys = [
   "HRMS_URL", "HRMS_API_KEY", "HRMS_API_SECRET", "POLL_INTERVAL", "DEDUP_WINDOW",
@@ -405,9 +430,10 @@ async function api(path, options) {
 
 function showTab(name) {
   document.querySelectorAll(".tab").forEach(t => t.classList.toggle("active", t.dataset.tab === name));
-  ["overview", "events", "processed", "retries", "manual", "config"].forEach(p => {
+  ["overview", "events", "processed", "retries", "manual", "employee-map", "config"].forEach(p => {
     $("panel-" + p).classList.toggle("hidden", p !== name);
   });
+  if (name === "employee-map" && employeeMapEntries.length === 0) loadEmployeeMap();
   if (name === "config" && !configCache) loadConfig();
   if (name === "manual") buildManualCommand();
 }
@@ -544,6 +570,70 @@ async function copyManualCommand() {
   buildManualCommand();
   await navigator.clipboard.writeText($("manualCommand").value);
   toast("Manual command copied.");
+}
+
+async function loadEmployeeMap() {
+  try {
+    const data = await api("/api/employee-map");
+    employeeMapEntries = (data.entries || []).map(entry => ({
+      device_employee_no: entry.device_employee_no || "",
+      frappe_employee_id: entry.frappe_employee_id || ""
+    }));
+    $("employeeMapPath").textContent = `${data.count || 0} mapping(s) · ${data.path}`;
+    renderEmployeeMap();
+  } catch (err) {
+    toast("Employee map load failed: " + err.message, true);
+  }
+}
+
+function renderEmployeeMap() {
+  const filter = ($("employeeMapFilter")?.value || "").trim().toLowerCase();
+  const rows = employeeMapEntries
+    .map((entry, index) => ({ entry, index }))
+    .filter(({ entry }) => {
+      if (!filter) return true;
+      return (
+        entry.device_employee_no.toLowerCase().includes(filter) ||
+        entry.frappe_employee_id.toLowerCase().includes(filter)
+      );
+    });
+
+  $("employeeMapBody").innerHTML = rows.length ? rows.map(({ entry, index }) => `<tr>
+    <td><input value="${esc(entry.device_employee_no)}" oninput="employeeMapEntries[${index}].device_employee_no = this.value" /></td>
+    <td><input value="${esc(entry.frappe_employee_id)}" oninput="employeeMapEntries[${index}].frappe_employee_id = this.value" /></td>
+    <td><button class="danger" onclick="removeEmployeeMapRow(${index})">Remove</button></td>
+  </tr>`).join("") : `<tr><td colspan="3" class="subtle">No mappings match the filter</td></tr>`;
+}
+
+function addEmployeeMapRow() {
+  employeeMapEntries.push({ device_employee_no: "", frappe_employee_id: "" });
+  $("employeeMapFilter").value = "";
+  renderEmployeeMap();
+}
+
+function removeEmployeeMapRow(index) {
+  employeeMapEntries.splice(index, 1);
+  renderEmployeeMap();
+}
+
+async function saveEmployeeMap() {
+  try {
+    const entries = employeeMapEntries
+      .map(entry => ({
+        device_employee_no: entry.device_employee_no.trim(),
+        frappe_employee_id: entry.frappe_employee_id.trim()
+      }))
+      .filter(entry => entry.device_employee_no || entry.frappe_employee_id);
+    const result = await api("/api/employee-map", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ entries })
+    });
+    toast(`Saved ${result.count} employee mapping(s). Restart server to apply.`);
+    loadEmployeeMap();
+  } catch (err) {
+    toast("Employee map save failed: " + err.message, true);
+  }
 }
 
 async function loadConfig() {

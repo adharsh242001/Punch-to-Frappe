@@ -251,6 +251,49 @@ def _save_config(body: dict[str, Any]) -> list[str]:
     return list(updates.keys())
 
 
+def _load_employee_map_view() -> dict[str, Any]:
+    employee_map = settings.load_employee_map()
+    return {
+        "path": str(settings.employee_map_path()),
+        "count": len(employee_map),
+        "entries": [
+            {"device_employee_no": key, "frappe_employee_id": value}
+            for key, value in sorted(employee_map.items(), key=lambda item: item[0].lower())
+        ],
+    }
+
+
+def _save_employee_map(body: dict[str, Any]) -> int:
+    entries = body.get("entries")
+    if not isinstance(entries, list):
+        raise ValueError("entries must be a list")
+
+    employee_map: dict[str, str] = {}
+    for index, entry in enumerate(entries, start=1):
+        if not isinstance(entry, dict):
+            raise ValueError(f"entry #{index} must be an object")
+        device_employee_no = str(entry.get("device_employee_no", "")).strip()
+        frappe_employee_id = str(entry.get("frappe_employee_id", "")).strip()
+        if not device_employee_no and not frappe_employee_id:
+            continue
+        if not device_employee_no:
+            raise ValueError(f"entry #{index} is missing device_employee_no")
+        if not frappe_employee_id:
+            raise ValueError(f"entry #{index} is missing frappe_employee_id")
+        if device_employee_no in employee_map:
+            raise ValueError(f"duplicate device_employee_no: {device_employee_no}")
+        employee_map[device_employee_no] = frappe_employee_id
+
+    path = settings.employee_map_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    with tmp_path.open("w", encoding="utf-8") as fh:
+        json.dump(employee_map, fh, indent=2, sort_keys=True)
+        fh.write("\n")
+    tmp_path.replace(path)
+    return len(employee_map)
+
+
 def process_pending_events(store: Any, processor: EventProcessor) -> dict[str, Any]:
     """Drain queued inbound events and run retry queue. Thread-safe."""
     with _push_lock:
@@ -394,6 +437,9 @@ class EventIngestHandler(BaseHTTPRequestHandler):
         if path == "/api/config":
             _json_response(self, 200, _load_config_view())
             return
+        if path == "/api/employee-map":
+            _json_response(self, 200, _load_employee_map_view())
+            return
         _json_response(self, 404, {"error": "not_found"})
 
     def do_POST(self) -> None:
@@ -418,6 +464,9 @@ class EventIngestHandler(BaseHTTPRequestHandler):
             return
         if self.path == "/api/config":
             self._handle_config_post()
+            return
+        if self.path == "/api/employee-map":
+            self._handle_employee_map_post()
             return
         _json_response(self, 404, {"error": "not_found"})
 
@@ -460,6 +509,50 @@ class EventIngestHandler(BaseHTTPRequestHandler):
                 "written_keys": sorted(written),
                 "restart_required": True,
                 "env_path": str(_ENV_PATH),
+            },
+        )
+
+    def _handle_employee_map_post(self) -> None:
+        length = int(self.headers.get("Content-Length", "0"))
+        raw = self.rfile.read(length)
+        try:
+            body = json.loads(raw.decode("utf-8")) if raw else {}
+        except json.JSONDecodeError:
+            _json_response(self, 400, {"error": "invalid_json"})
+            return
+
+        try:
+            count = _save_employee_map(body)
+        except ValueError as exc:
+            _json_response(self, 400, {"error": str(exc)})
+            return
+        except PermissionError as exc:
+            _json_response(
+                self,
+                500,
+                {
+                    "error": f"cannot write {settings.employee_map_path()}: {exc}. "
+                    "In Docker, mount employee_map.json read-write and make it writable "
+                    "by uid 10001 (e.g. `chown 10001:10001 employee_map.json`)."
+                },
+            )
+            return
+        except OSError as exc:
+            _json_response(
+                self,
+                500,
+                {"error": f"cannot write {settings.employee_map_path()}: {exc}"},
+            )
+            return
+
+        _json_response(
+            self,
+            200,
+            {
+                "ok": True,
+                "count": count,
+                "path": str(settings.employee_map_path()),
+                "restart_required": True,
             },
         )
 
