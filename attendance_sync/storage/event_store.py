@@ -65,6 +65,7 @@ class EventStore:
                 event_time  TEXT    NOT NULL,
                 device_ip   TEXT    NOT NULL,
                 serial_no   TEXT    NOT NULL UNIQUE,
+                log_type    TEXT,
                 attempts    INTEGER NOT NULL DEFAULT 0,
                 next_retry  TEXT    NOT NULL,
                 last_error  TEXT
@@ -83,6 +84,12 @@ class EventStore:
             );
             """
         )
+        columns = {
+            row["name"]
+            for row in conn.execute("PRAGMA table_info(retry_queue)").fetchall()
+        }
+        if "log_type" not in columns:
+            conn.execute("ALTER TABLE retry_queue ADD COLUMN log_type TEXT")
         conn.commit()
 
     # ── processed events ─────────────────────────────────────────────────────
@@ -158,15 +165,17 @@ class EventStore:
         serial_no: str,
         next_retry: datetime,
         error: str = "",
+        log_type: str | None = None,
     ) -> None:
         """Add (or update attempt count of) a failed checkin to the retry queue."""
         self._conn().execute(
             """
             INSERT INTO retry_queue
-                (employee_id, event_time, device_ip, serial_no, attempts, next_retry, last_error)
-            VALUES (?, ?, ?, ?, 1, ?, ?)
+                (employee_id, event_time, device_ip, serial_no, log_type, attempts, next_retry, last_error)
+            VALUES (?, ?, ?, ?, ?, 1, ?, ?)
             ON CONFLICT(serial_no) DO UPDATE SET
                 attempts   = attempts + 1,
+                log_type   = excluded.log_type,
                 next_retry = excluded.next_retry,
                 last_error = excluded.last_error
             """,
@@ -175,6 +184,7 @@ class EventStore:
                 event_time,
                 device_ip,
                 serial_no,
+                log_type,
                 next_retry.isoformat(),
                 error,
             ),
@@ -186,7 +196,7 @@ class EventStore:
         now = datetime.now(timezone.utc).isoformat()
         cur = self._conn().execute(
             """
-            SELECT id, employee_id, event_time, device_ip, serial_no, attempts
+            SELECT id, employee_id, event_time, device_ip, serial_no, log_type, attempts
             FROM retry_queue
             WHERE next_retry <= ? AND attempts < ?
             ORDER BY next_retry
@@ -238,7 +248,7 @@ class EventStore:
         self._conn().commit()
         return inserted, skipped
 
-    def get_pending_inbound_events(self, limit: int = 500) -> list[dict[str, Any]]:
+    def get_pending_inbound_events(self, limit: int = 20000) -> list[dict[str, Any]]:
         """Return queued edge events that still need to be pushed to Frappe."""
         cur = self._conn().execute(
             """
@@ -349,7 +359,7 @@ class EventStore:
     def get_retry_queue(self, limit: int = 50) -> list[dict[str, Any]]:
         cur = self._conn().execute(
             """
-            SELECT id, employee_id, event_time, device_ip, serial_no, attempts,
+            SELECT id, employee_id, event_time, device_ip, serial_no, log_type, attempts,
                    next_retry, last_error
             FROM retry_queue
             ORDER BY next_retry
@@ -358,6 +368,67 @@ class EventStore:
             (limit,),
         )
         return [dict(row) for row in cur.fetchall()]
+
+    def attendance_overview(self, limit: int = 5000) -> list[dict[str, Any]]:
+        cur = self._conn().execute(
+            """
+            SELECT source_node, payload, status, last_result
+            FROM inbound_events
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+        grouped: dict[tuple[str, str], dict[str, Any]] = {}
+        for row in cur.fetchall():
+            try:
+                payload = json.loads(row["payload"])
+            except Exception:
+                continue
+
+            employee = str(
+                payload.get("employeeNoString") or payload.get("employeeNo") or ""
+            ).strip()
+            event_time = str(payload.get("time") or "").strip()
+            if not employee or not event_time:
+                continue
+
+            event_date = event_time.split("T", 1)[0].split(" ", 1)[0]
+            key = (employee, event_date)
+            item = grouped.setdefault(
+                key,
+                {
+                    "employee": employee,
+                    "date": event_date,
+                    "source_nodes": set(),
+                    "devices": set(),
+                    "punch_count": 0,
+                    "first_time": None,
+                    "first_result": None,
+                    "last_time": None,
+                    "last_result": None,
+                },
+            )
+            item["source_nodes"].add(row["source_node"])
+            device_ip = payload.get("deviceIP")
+            if device_ip:
+                item["devices"].add(str(device_ip))
+            item["punch_count"] += 1
+
+            if item["first_time"] is None or event_time < item["first_time"]:
+                item["first_time"] = event_time
+                item["first_result"] = row["last_result"] or row["status"]
+            if item["last_time"] is None or event_time > item["last_time"]:
+                item["last_time"] = event_time
+                item["last_result"] = row["last_result"] or row["status"]
+
+        overview = []
+        for item in grouped.values():
+            item["source_nodes"] = sorted(item["source_nodes"])
+            item["devices"] = sorted(item["devices"])
+            overview.append(item)
+        overview.sort(key=lambda item: (item["date"], item["employee"]), reverse=True)
+        return overview[:200]
 
     @staticmethod
     def _source_event_id(event: dict[str, Any]) -> str:

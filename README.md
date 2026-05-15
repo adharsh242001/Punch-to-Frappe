@@ -20,7 +20,7 @@ It currently supports three workflows:
 
 3. The device returns punch events containing values like employee number, employee name, punch time, serial number, and source device.
 4. The employee number from the device is matched against `employee_map.json`.
-5. If the employee is mapped and the event is not a duplicate, the script creates an `Employee Checkin` record in Frappe HRMS.
+5. In distributed server mode, the central server keeps all received raw punches for audit, but only pushes each employee's first punch and last punch for each date to Frappe HRMS.
 6. Successfully processed event serial numbers are stored in SQLite so the same event is not pushed again.
 7. Temporary Frappe/API failures are saved into a retry queue and retried later.
 
@@ -320,6 +320,7 @@ Open `http://central-server-ip:8090/` in a browser. The dashboard shows:
 
 - Pending / pushed / retry counters
 - Per-edge-node connection status (online / stale / offline / never connected) based on the last `/events` POST received
+- Daily first / last punch overview grouped by employee and date
 - Recent inbound events, recently pushed checkins, and the retry queue
 - A **Push now** button that drains the queue and runs retries immediately
 - The last push run, including manual/automatic trigger, result breakdown, and retry count
@@ -374,6 +375,13 @@ server without starting the continuous loop:
 ```powershell
 python attendance_sync\edge_agent.py --from "2026-05-01 00:00:00" --to "2026-05-10 23:59:59"
 ```
+
+The dashboard includes a **Manual Range** tab that generates this command for
+PC A / PC B. The current architecture is edge-to-server only: edge PCs upload
+to the central server, but the server cannot directly run commands on an edge
+PC or fetch from its devices. To support server-initiated jobs safely in the
+future, add a restricted command queue that the edge agent polls, rather than
+opening a general remote shell.
 
 If an edge PC cannot reach the central server, it does not advance its poll window; on the next cycle it fetches that same time range again and resends. The central server de-duplicates received batches, so repeat sends are safe.
 

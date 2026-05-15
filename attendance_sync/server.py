@@ -259,11 +259,53 @@ def process_pending_events(store: Any, processor: EventProcessor) -> dict[str, A
         results: dict[str, int] = {}
         if rows:
             logger.info("Processing %d queued inbound event(s).", len(rows))
+
+            ready_rows: list[dict[str, Any]] = []
             for row in rows:
                 event = _namespaced_event(row["source_node"], row["payload"])
-                result = processor.process(event)
+                result, prepared = processor.prepare_event(event)
+                if result == "ready" and prepared is not None:
+                    ready_rows.append({"row": row, "prepared": prepared})
+                    continue
+
                 store.mark_inbound_processed(row["id"], result)
                 results[result] = results.get(result, 0) + 1
+                processed += 1
+
+            grouped: dict[tuple[str, str], list[dict[str, Any]]] = {}
+            for item in ready_rows:
+                prepared = item["prepared"]
+                key = (prepared["hrms_id"], prepared["event_date"])
+                grouped.setdefault(key, []).append(item)
+
+            selected_ids: set[int] = set()
+            for (_employee_id, _event_date), items in grouped.items():
+                items.sort(key=lambda item: item["prepared"]["event_dt"])
+                first = items[0]
+                last = items[-1]
+                selected_ids.add(first["row"]["id"])
+                first_result = processor.push_prepared_event(first["prepared"], log_type="IN")
+                store.mark_inbound_processed(first["row"]["id"], f"first_checkin_{first_result}")
+                results[f"first_checkin_{first_result}"] = (
+                    results.get(f"first_checkin_{first_result}", 0) + 1
+                )
+                processed += 1
+
+                if last["row"]["id"] != first["row"]["id"]:
+                    selected_ids.add(last["row"]["id"])
+                    last_result = processor.push_prepared_event(last["prepared"], log_type="OUT")
+                    store.mark_inbound_processed(last["row"]["id"], f"last_checkout_{last_result}")
+                    results[f"last_checkout_{last_result}"] = (
+                        results.get(f"last_checkout_{last_result}", 0) + 1
+                    )
+                    processed += 1
+
+            for item in ready_rows:
+                row = item["row"]
+                if row["id"] in selected_ids:
+                    continue
+                store.mark_inbound_processed(row["id"], "skipped_middle_punch")
+                results["skipped_middle_punch"] = results.get("skipped_middle_punch", 0) + 1
                 processed += 1
 
         retries = processor.process_retries()
@@ -339,6 +381,9 @@ class EventIngestHandler(BaseHTTPRequestHandler):
             return
         if path == "/api/events":
             _json_response(self, 200, {"events": self.store.recent_inbound(100)})
+            return
+        if path == "/api/attendance-overview":
+            _json_response(self, 200, {"overview": self.store.attendance_overview()})
             return
         if path == "/api/retries":
             _json_response(self, 200, {"retries": self.store.get_retry_queue(100)})
@@ -456,8 +501,6 @@ class EventIngestHandler(BaseHTTPRequestHandler):
             "Received %d event(s) from %s: inserted=%d skipped=%d",
             len(safe_events), node_id, inserted, skipped,
         )
-        if inserted:
-            _wake_event.set()
         _json_response(
             self, 202,
             {"accepted": len(safe_events), "inserted": inserted, "skipped": skipped},

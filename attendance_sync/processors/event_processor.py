@@ -101,14 +101,12 @@ class EventProcessor:
 
     # ── main entry point ──────────────────────────────────────────────────────
 
-    def process(self, event: dict[str, Any]) -> str:
+    def prepare_event(self, event: dict[str, Any]) -> tuple[str, dict[str, Any] | None]:
         """
-        Handle one raw event dict from a Hikvision device.
+        Validate, de-duplicate, and map one raw event without pushing it.
 
-        Fields expected in *event*:
-          employeeNoString, name, time, serialNo, deviceIP
-
-        Returns a short result string useful for queued/server workflows.
+        Returns (result, prepared). If result is "ready", prepared contains
+        the mapped employee, parsed datetime, and Frappe-ready timestamp.
         """
         serial_no = str(event.get("serialNo", "")).strip()
         device_ip = event.get("deviceIP", "")
@@ -118,7 +116,7 @@ class EventProcessor:
 
         if not serial_no:
             logger.warning("Event missing serialNo – skipping: %s", event)
-            return "skipped_missing_serial"
+            return "skipped_missing_serial", None
 
         # 1. Skip already-processed events (serialNo dedup)
         if self._store.is_processed(serial_no):
@@ -127,7 +125,7 @@ class EventProcessor:
                 serial_no,
                 employee_no,
             )
-            return "already_processed"
+            return "already_processed", None
 
         # 2. Parse timestamp
         event_dt = _parse_event_time(raw_time)
@@ -137,7 +135,7 @@ class EventProcessor:
                 serial_no,
                 raw_time,
             )
-            return "skipped_bad_time"
+            return "skipped_bad_time", None
 
         # 3. Map device employee number → HRMS employee ID
         norm_id = self._normalize_id(employee_no)
@@ -154,7 +152,7 @@ class EventProcessor:
                     name,
                     device_ip,
                 )
-            return "skipped_missing_mapping"
+            return "skipped_missing_mapping", None
 
         # 4. 30-second window dedup per employee
         if self._store.is_duplicate_punch(hrms_id, event_dt, self._dedup_window):
@@ -166,21 +164,67 @@ class EventProcessor:
             )
             # Still mark as processed so we don't keep evaluating it
             self._store.mark_processed(serial_no, employee_no, device_ip, raw_time)
-            return "skipped_duplicate_window"
+            return "skipped_duplicate_window", None
 
-        # 5. Push to Frappe
-        frappe_time = _format_for_frappe(event_dt)
+        return "ready", {
+            "hrms_id": hrms_id,
+            "frappe_time": _format_for_frappe(event_dt),
+            "device_ip": device_ip,
+            "serial_no": serial_no,
+            "employee_no": employee_no,
+            "event_dt": event_dt,
+            "raw_time": raw_time,
+            "event_date": event_dt.date().isoformat(),
+        }
+
+    def process(self, event: dict[str, Any]) -> str:
+        """
+        Handle one raw Hikvision event and push it to Frappe.
+
+        Fields expected in *event*:
+          employeeNoString, name, time, serialNo, deviceIP
+
+        Returns a short result string useful for queued/server workflows.
+        """
+        result, prepared = self.prepare_event(event)
+        if result != "ready" or prepared is None:
+            return result
+
         return self._push_checkin(
-            hrms_id=hrms_id,
-            frappe_time=frappe_time,
-            device_ip=device_ip,
-            serial_no=serial_no,
-            employee_no=employee_no,
-            event_dt=event_dt,
-            raw_time=raw_time,
+            hrms_id=prepared["hrms_id"],
+            frappe_time=prepared["frappe_time"],
+            device_ip=prepared["device_ip"],
+            serial_no=prepared["serial_no"],
+            employee_no=prepared["employee_no"],
+            event_dt=prepared["event_dt"],
+            raw_time=prepared["raw_time"],
             log_type=settings.DEFAULT_LOG_TYPE,
             latitude=settings.LATITUDE,
             longitude=settings.LONGITUDE,
+        )
+
+    def push_prepared_event(self, prepared: dict[str, Any], log_type: str) -> str:
+        """Push a prepared event with the supplied log type."""
+        return self._push_checkin(
+            hrms_id=prepared["hrms_id"],
+            frappe_time=prepared["frappe_time"],
+            device_ip=prepared["device_ip"],
+            serial_no=prepared["serial_no"],
+            employee_no=prepared["employee_no"],
+            event_dt=prepared["event_dt"],
+            raw_time=prepared["raw_time"],
+            log_type=log_type,
+            latitude=settings.LATITUDE,
+            longitude=settings.LONGITUDE,
+        )
+
+    def mark_prepared_processed(self, prepared: dict[str, Any]) -> None:
+        """Record a prepared event as intentionally handled without pushing."""
+        self._store.mark_processed(
+            prepared["serial_no"],
+            prepared["employee_no"],
+            prepared["device_ip"],
+            prepared["raw_time"],
         )
 
     def process_retries(self) -> int:
@@ -202,7 +246,7 @@ class EventProcessor:
                 raw_time=row["event_time"],
                 retry_row_id=row["id"],
                 attempt=row["attempts"],
-                log_type=settings.DEFAULT_LOG_TYPE,
+                log_type=row.get("log_type") or settings.DEFAULT_LOG_TYPE,
                 latitude=settings.LATITUDE,
                 longitude=settings.LONGITUDE,
             )
@@ -302,5 +346,6 @@ class EventProcessor:
                 serial_no=serial_no,
                 next_retry=next_retry,
                 error=str(exc),
+                log_type=log_type,
             )
             return "queued_retry"
