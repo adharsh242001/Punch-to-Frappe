@@ -191,17 +191,19 @@ class EventStore:
         )
         self._conn().commit()
 
-    def get_due_retries(self, max_attempts: int) -> list[dict]:
-        """Return retry rows whose next_retry <= now and attempts < max_attempts."""
+    def get_due_retries(self, max_attempts: int, force: bool = False) -> list[dict]:
+        """Return retry rows whose next_retry is due, or all live retries when forced."""
         now = datetime.now(timezone.utc).isoformat()
+        due_clause = "" if force else "next_retry <= ? AND"
+        params: tuple[Any, ...] = (max_attempts,) if force else (now, max_attempts)
         cur = self._conn().execute(
-            """
+            f"""
             SELECT id, employee_id, event_time, device_ip, serial_no, log_type, attempts
             FROM retry_queue
-            WHERE next_retry <= ? AND attempts < ?
+            WHERE {due_clause} attempts < ?
             ORDER BY next_retry
             """,
-            (now, max_attempts),
+            params,
         )
         return [dict(row) for row in cur.fetchall()]
 

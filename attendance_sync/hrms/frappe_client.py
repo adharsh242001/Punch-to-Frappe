@@ -107,7 +107,7 @@ class FrappeClient:
             status = exc.response.status_code
             body = exc.response.text[:500]
             raise FrappeAPIError(
-                f"HTTP {status} from Frappe: {body}", status_code=status
+                f"HTTP {status} from Frappe: {body}", status_code=status, body=body
             ) from exc
         except requests.exceptions.ConnectionError as exc:
             raise FrappeAPIError(f"Connection error: {exc}") from exc
@@ -132,9 +132,15 @@ class FrappeClient:
 class FrappeAPIError(Exception):
     """Raised when the Frappe API returns an error response."""
 
-    def __init__(self, message: str, status_code: int | None = None) -> None:
+    def __init__(
+        self,
+        message: str,
+        status_code: int | None = None,
+        body: str = "",
+    ) -> None:
         super().__init__(message)
         self.status_code = status_code
+        self.body = body
 
     @property
     def is_client_error(self) -> bool:
@@ -143,5 +149,15 @@ class FrappeAPIError(Exception):
 
     @property
     def is_duplicate(self) -> bool:
-        """Frappe returns 409 (or sometimes 417) for duplicate records."""
-        return self.status_code in (409, 417)
+        """Return True only for actual duplicate Employee Checkin responses."""
+        if self.status_code == 409:
+            return True
+        if self.status_code != 417:
+            return False
+
+        body = self.body.lower()
+        return (
+            "duplicateentryerror" in body
+            or "duplicate entry" in body
+            or "already exists" in body
+        )

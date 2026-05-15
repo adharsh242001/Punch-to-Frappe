@@ -407,7 +407,7 @@ def process_pending_events(store: Any, processor: EventProcessor) -> dict[str, A
                 results["skipped_middle_punch"] = results.get("skipped_middle_punch", 0) + 1
                 processed += 1
 
-        retries = processor.process_retries()
+        retries = processor.process_retries(force=True)
         return {"processed": processed, "retries": int(retries or 0), "results": results}
 
 

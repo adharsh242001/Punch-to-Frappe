@@ -185,15 +185,20 @@ class PostgresEventStore:
                 ),
             )
 
-    def get_due_retries(self, max_attempts: int) -> list[dict]:
+    def get_due_retries(self, max_attempts: int, force: bool = False) -> list[dict]:
+        due_clause = "" if force else "next_retry <= %s AND"
+        params: tuple[Any, ...] = (
+            (max_attempts,) if force
+            else (datetime.now(timezone.utc).isoformat(), max_attempts)
+        )
         rows = self._conn().execute(
-            """
+            f"""
             SELECT id, employee_id, event_time, device_ip, serial_no, log_type, attempts
             FROM retry_queue
-            WHERE next_retry <= %s AND attempts < %s
+            WHERE {due_clause} attempts < %s
             ORDER BY next_retry
             """,
-            (datetime.now(timezone.utc).isoformat(), max_attempts),
+            params,
         ).fetchall()
         return [dict(row) for row in rows]
 

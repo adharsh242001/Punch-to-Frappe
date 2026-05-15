@@ -227,13 +227,13 @@ class EventProcessor:
             prepared["raw_time"],
         )
 
-    def process_retries(self) -> int:
-        """Drain the retry queue, re-pushing events that are now due."""
-        due = self._store.get_due_retries(self._retry_max)
+    def process_retries(self, force: bool = False) -> int:
+        """Drain retry queue items, optionally ignoring their next_retry time."""
+        due = self._store.get_due_retries(self._retry_max, force=force)
         if not due:
             return 0
 
-        logger.info("Processing %d retry item(s)…", len(due))
+        logger.info("Processing %d retry item(s)%s.", len(due), " now" if force else "")
         handled = 0
         for row in due:
             self._push_checkin(
@@ -318,15 +318,20 @@ class EventProcessor:
 
             if exc.is_client_error:
                 logger.error(
-                    "Permanent client error for serial=%s: %s – discarding.",
+                    "Frappe client error for serial=%s: %s – keeping in retry queue for review.",
                     serial_no,
                     exc,
                 )
-                # Mark processed to avoid infinite reprocessing
-                self._store.mark_processed(serial_no, employee_no, device_ip, raw_time)
-                if retry_row_id is not None:
-                    self._store.remove_retry(retry_row_id)
-                return "discarded_client_error"
+                self._store.enqueue_retry(
+                    employee_id=hrms_id,
+                    event_time=frappe_time,
+                    device_ip=device_ip,
+                    serial_no=serial_no,
+                    next_retry=datetime.now(timezone.utc) + timedelta(hours=24),
+                    error=str(exc),
+                    log_type=log_type,
+                )
+                return "queued_client_error"
 
             # Transient error → schedule retry
             next_attempt = attempt + 1
