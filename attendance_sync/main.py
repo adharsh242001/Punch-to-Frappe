@@ -15,6 +15,7 @@ import signal
 import sys
 import time
 from datetime import datetime, timezone, timedelta
+from typing import Any
 
 # Ensure the package root is on the path when run directly
 import os as _os
@@ -62,9 +63,8 @@ def run_poll_cycle(
     device_config: dict[str, str],
     start_time: datetime,
     end_time: datetime,
-    processor: EventProcessor,
-) -> None:
-    """Fetch events from one device and run each through the processor."""
+) -> list[dict[str, Any]]:
+    """Fetch events from one device."""
     client = HikvisionClient(
         device_ip=device_config["ip"],
         username=device_config["user"],
@@ -73,15 +73,62 @@ def run_poll_cycle(
         minor=settings.EVENT_MINOR,
     )
 
-    event_count = 0
+    events: list[dict[str, Any]] = []
     try:
         for event in client.fetch_events(start_time, end_time):
-            processor.process(event)
-            event_count += 1
+            events.append(event)
     finally:
         client.close()
 
-    logger.debug("[%s] Fetched %d event(s) in this cycle.", device_config["ip"], event_count)
+    logger.debug("[%s] Fetched %d event(s) in this cycle.", device_config["ip"], len(events))
+    return events
+
+
+def process_first_last_events(
+    events: list[dict[str, Any]],
+    processor: EventProcessor,
+) -> dict[str, int]:
+    """Push only the first and last prepared punch for each employee/date."""
+    ready_events: list[dict[str, Any]] = []
+    results: dict[str, int] = {}
+
+    def count(result: str) -> None:
+        results[result] = results.get(result, 0) + 1
+
+    for event in events:
+        result, prepared = processor.prepare_event(event)
+        if result == "ready" and prepared is not None:
+            ready_events.append(prepared)
+            continue
+        count(result)
+
+    grouped: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for prepared in ready_events:
+        key = (str(prepared["hrms_id"]), str(prepared["event_date"]))
+        grouped.setdefault(key, []).append(prepared)
+
+    pushed_serials: set[str] = set()
+    for punches in grouped.values():
+        punches.sort(key=lambda item: item["event_dt"])
+
+        first_punch = punches[0]
+        first_result = processor.push_prepared_event(first_punch, "IN")
+        pushed_serials.add(str(first_punch["serial_no"]))
+        count(f"first_checkin_{first_result}")
+
+        last_punch = punches[-1]
+        if str(last_punch["serial_no"]) != str(first_punch["serial_no"]):
+            last_result = processor.push_prepared_event(last_punch, "OUT")
+            pushed_serials.add(str(last_punch["serial_no"]))
+            count(f"last_checkout_{last_result}")
+
+    for prepared in ready_events:
+        if str(prepared["serial_no"]) in pushed_serials:
+            continue
+        processor.mark_prepared_processed(prepared)
+        count("skipped_middle_punch")
+
+    return results
 
 
 def create_processor() -> tuple[FrappeClient, EventProcessor]:
@@ -127,14 +174,22 @@ def run_manual_sync(start_time: datetime, end_time: datetime) -> None:
 
     frappe, processor = create_processor()
     try:
+        all_events: list[dict[str, Any]] = []
         for device_config in settings.DEVICE_CONFIGS:
             try:
-                run_poll_cycle(device_config, start_time, end_time, processor)
+                all_events.extend(run_poll_cycle(device_config, start_time, end_time))
             except Exception:  # noqa: BLE001
                 logger.exception(
                     "Unexpected error during manual sync for device %s",
                     device_config["ip"],
                 )
+
+        results = process_first_last_events(all_events, processor)
+        logger.info(
+            "Manual range prepared %d raw event(s); first/last push results: %s",
+            len(all_events),
+            results,
+        )
 
         try:
             processor.process_retries()
@@ -153,7 +208,8 @@ def main() -> None:
         raise EnvironmentError("DEVICES must list at least one IP when running the poller.")
 
     logger.info(
-        "Devices: %s | Poll interval: %ds | Dedup window: %ds",
+        "Devices: %s | Poll interval: %ds | Dedup window: %ds | "
+        "Frappe push: first IN and last OUT per employee/day",
         ", ".join(settings.DEVICE_IPS),
         settings.POLL_INTERVAL,
         settings.DEDUP_WINDOW,
@@ -182,11 +238,20 @@ def main() -> None:
             end_time.isoformat(),
         )
 
+        all_events: list[dict[str, Any]] = []
         for device_config in settings.DEVICE_CONFIGS:
             try:
-                run_poll_cycle(device_config, start_time, end_time, processor)
+                all_events.extend(run_poll_cycle(device_config, start_time, end_time))
             except Exception:  # noqa: BLE001
                 logger.exception("Unexpected error polling device %s", device_config["ip"])
+
+        results = process_first_last_events(all_events, processor)
+        if all_events or results:
+            logger.info(
+                "Cycle prepared %d raw event(s); first/last push results: %s",
+                len(all_events),
+                results,
+            )
 
         # Process any pending retries
         try:
