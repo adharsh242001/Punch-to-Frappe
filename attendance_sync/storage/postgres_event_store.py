@@ -509,12 +509,13 @@ class PostgresEventStore:
 
     @staticmethod
     def _source_event_id(event: dict[str, Any]) -> str:
+        device_ip = str(event.get("deviceIP", "")).strip()
         serial_no = str(event.get("serialNo", "")).strip()
         if serial_no:
-            return serial_no
+            return "|".join([device_ip, serial_no])
 
         parts = [
-            str(event.get("deviceIP", "")).strip(),
+            device_ip,
             str(event.get("employeeNoString", "")).strip(),
             str(event.get("time", "")).strip(),
         ]

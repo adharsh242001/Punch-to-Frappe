@@ -309,6 +309,7 @@ What it does:
 - Stores incoming events in `data/events.db`.
 - Stores incoming events until you press **Push now** in the dashboard or call the manual push API.
 - Uses the same employee mapping, duplicate checks, and retry queue as the existing sync service.
+- Deduplicates incoming raw uploads by edge node, device IP, and device serial number so multiple devices behind one PC do not hide each other's punches.
 
 Health check:
 

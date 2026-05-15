@@ -527,13 +527,14 @@ class EventStore:
 
     @staticmethod
     def _source_event_id(event: dict[str, Any]) -> str:
-        """Build a stable source id when the device serial number is missing."""
+        """Build a stable source id for deduping uploads from one edge node."""
+        device_ip = str(event.get("deviceIP", "")).strip()
         serial_no = str(event.get("serialNo", "")).strip()
         if serial_no:
-            return serial_no
+            return "|".join([device_ip, serial_no])
 
         parts = [
-            str(event.get("deviceIP", "")).strip(),
+            device_ip,
             str(event.get("employeeNoString", "")).strip(),
             str(event.get("time", "")).strip(),
         ]
