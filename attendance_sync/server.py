@@ -2,7 +2,7 @@
 Central attendance sync server.
 
 Receives signed event batches from edge PCs, stores them in SQLite, and pushes
-queued events to Frappe on the configured POLL_INTERVAL.
+queued events to Frappe only when the dashboard/manual API asks it to.
 
 Also serves a small dashboard at "/" with live status, recent events, retry
 queue, per-node connection status, and a manual "Push now" button.
@@ -38,11 +38,10 @@ from transport.security import (
 logger = logging.getLogger(__name__)
 _running = True
 
-# Serialises pushes between the background loop and manual /api/push calls so
-# the same event is never processed by two threads at once.
+# Serialises pushes so the same event is never processed by two requests at once.
 _push_lock = threading.Lock()
 
-# Wakes the background loop early (e.g. from a manual push or a fresh batch).
+# Wakes the server loop for shutdown.
 _wake_event = threading.Event()
 
 _DASHBOARD_HTML_PATH = Path(__file__).resolve().parent / "dashboard.html"
@@ -428,6 +427,9 @@ class EventIngestHandler(BaseHTTPRequestHandler):
         if path == "/api/attendance-overview":
             _json_response(self, 200, {"overview": self.store.attendance_overview()})
             return
+        if path == "/api/alerts":
+            _json_response(self, 200, {"alerts": self.store.dashboard_alerts()})
+            return
         if path == "/api/retries":
             _json_response(self, 200, {"retries": self.store.get_retry_queue(100)})
             return
@@ -687,20 +689,14 @@ def main() -> None:
     server_thread.start()
 
     logger.info(
-        "Central sync server listening on %s:%d; dashboard at http://%s:%d/  | push interval=%ds",
+        "Central sync server listening on %s:%d; dashboard at http://%s:%d/ | Frappe push is manual",
         settings.SERVER_HOST, settings.SERVER_PORT,
         settings.SERVER_HOST, settings.SERVER_PORT,
-        settings.POLL_INTERVAL,
     )
 
     try:
         while _running:
-            try:
-                run_push(store, processor, trigger="automatic")
-            except Exception:  # noqa: BLE001
-                logger.exception("Automatic push cycle failed")
-            # Sleep until POLL_INTERVAL elapses or a wake signal arrives.
-            _wake_event.wait(timeout=settings.POLL_INTERVAL)
+            _wake_event.wait(timeout=1.0)
             _wake_event.clear()
     finally:
         logger.info("Stopping central sync server.")

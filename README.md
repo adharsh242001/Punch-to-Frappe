@@ -125,7 +125,7 @@ All runtime settings are read from `.env`.
 | `HIKVISION_USE_HTTPS` | `true` | Use HTTPS for device calls. If connection fails, the client tries the other protocol. |
 | `HIKVISION_VERIFY_SSL` | `false` | Verify device SSL certificates. Usually false for local Hikvision devices. |
 | `DEVICE_NAMES` | empty | Friendly names sent to Frappe instead of raw IPs. |
-| `POLL_INTERVAL` | `600` | Seconds between continuous service polling cycles. |
+| `POLL_INTERVAL` | `600` | Seconds between edge/continuous poller cycles. The central distributed server stores uploads and pushes to Frappe manually from the dashboard. |
 | `FIRST_RUN_LOOKBACK_HOURS` | `24` | On service startup, fetch this many previous hours. |
 | `DEDUP_WINDOW` | `30` | Ignore another punch from the same mapped employee within this many seconds. |
 | `EVENT_MAJOR` | `5` | Hikvision event major filter. |
@@ -307,7 +307,7 @@ What it does:
 
 - Receives `POST /events` batches from PC A and PC B.
 - Stores incoming events in `data/events.db`.
-- Every `POLL_INTERVAL` seconds, pushes queued events to Frappe.
+- Stores incoming events until you press **Push now** in the dashboard or call the manual push API.
 - Uses the same employee mapping, duplicate checks, and retry queue as the existing sync service.
 
 Health check:
@@ -321,11 +321,12 @@ Invoke-RestMethod http://central-server-ip:8090/health
 Open `http://central-server-ip:8090/` in a browser. The dashboard shows:
 
 - Pending / pushed / retry counters
+- Alert count and **Alerts** tab for punches that were not pushed, missing employee mappings, retry items, bad timestamps, and other issues needing resolution
 - Per-edge-node connection status (online / stale / offline / never connected) based on the last `/events` POST received
 - Daily first / last punch overview grouped by employee and date
 - Recent inbound events, recently pushed checkins, and the retry queue
-- A **Push now** button that drains the queue and runs retries immediately
-- The last push run, including manual/automatic trigger, result breakdown, and retry count
+- A **Push now** button that drains the queue and runs retries. In distributed server mode, Frappe push is manual; the server does not auto-push every 600 seconds.
+- The last push run, including trigger, result breakdown, and retry count
 - An **Employee Map** tab for adding, editing, searching, and removing device employee number to Frappe employee ID mappings. Restart the server after saving so the processor reloads the map.
 - A **Configuration** tab where you can edit `HRMS_URL`, `HRMS_API_KEY`, `HRMS_API_SECRET`, `SERVER_NODE_KEYS` (add/remove edge nodes), poll/dedup intervals, log level and storage settings. Edits are written back to `.env` (or the mounted `.env.server` in Docker); restart the server to apply.
 

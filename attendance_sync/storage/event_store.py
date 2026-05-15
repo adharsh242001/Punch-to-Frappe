@@ -430,6 +430,99 @@ class EventStore:
         overview.sort(key=lambda item: (item["date"], item["employee"]), reverse=True)
         return overview[:200]
 
+    def dashboard_alerts(self, limit: int = 100) -> list[dict[str, Any]]:
+        alerts: list[dict[str, Any]] = []
+
+        retry_rows = self._conn().execute(
+            """
+            SELECT employee_id, event_time, device_ip, serial_no, log_type, attempts,
+                   next_retry, last_error
+            FROM retry_queue
+            ORDER BY next_retry
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+        for row in retry_rows:
+            alerts.append(
+                {
+                    "severity": "warning",
+                    "kind": "retry",
+                    "title": "Frappe push waiting for retry",
+                    "employee": row["employee_id"],
+                    "device_ip": row["device_ip"],
+                    "event_time": row["event_time"],
+                    "detail": row["last_error"] or f"attempts: {row['attempts']}",
+                    "action": "Check Frappe connectivity/credentials, then use Push Now.",
+                }
+            )
+
+        bad_rows = self._conn().execute(
+            """
+            SELECT source_node, payload, received_at, processed_at, last_result
+            FROM inbound_events
+            WHERE last_result LIKE '%%missing%%'
+               OR last_result LIKE '%%bad%%'
+               OR last_result LIKE '%%error%%'
+               OR last_result LIKE '%%discarded%%'
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+        for row in bad_rows:
+            try:
+                payload = json.loads(row["payload"])
+            except Exception:
+                payload = {}
+            result = row["last_result"] or "unresolved"
+            action = "Review the event and logs."
+            if "missing_mapping" in result:
+                action = "Add this employee number in Employee Map, restart server, then re-upload or reprocess the range."
+            elif "bad_time" in result:
+                action = "Check the device clock/time format."
+            elif "missing_serial" in result:
+                action = "Check the device event payload; serial number is required for dedupe."
+            alerts.append(
+                {
+                    "severity": "critical" if "missing_mapping" in result else "warning",
+                    "kind": result,
+                    "title": "Punch was not pushed to Frappe",
+                    "employee": payload.get("employeeNoString") or payload.get("employeeNo"),
+                    "device_ip": payload.get("deviceIP"),
+                    "event_time": payload.get("time"),
+                    "source_node": row["source_node"],
+                    "detail": result,
+                    "action": action,
+                    "received_at": row["received_at"],
+                    "processed_at": row["processed_at"],
+                }
+            )
+
+        pending_row = self._conn().execute(
+            """
+            SELECT COUNT(*) AS count, MIN(received_at) AS oldest
+            FROM inbound_events
+            WHERE status = 'pending'
+            """
+        ).fetchone()
+        if pending_row and int(pending_row["count"] or 0) > 0:
+            alerts.insert(
+                0,
+                {
+                    "severity": "info",
+                    "kind": "pending_queue",
+                    "title": "Punches are waiting to be processed",
+                    "employee": "",
+                    "device_ip": "",
+                    "event_time": pending_row["oldest"],
+                    "detail": f"{pending_row['count']} pending event(s)",
+                    "action": "Wait for the next interval or use Push Now.",
+                },
+            )
+
+        return alerts[:limit]
+
     @staticmethod
     def _source_event_id(event: dict[str, Any]) -> str:
         """Build a stable source id when the device serial number is missing."""

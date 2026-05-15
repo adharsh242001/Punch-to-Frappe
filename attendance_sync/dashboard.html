@@ -136,6 +136,7 @@
   .good { color: var(--good); background: var(--good-bg); }
   .warn { color: var(--warn); background: var(--warn-bg); }
   .bad { color: var(--bad); background: var(--bad-bg); }
+  .info { color: var(--brand); background: #eaf4f8; }
   .neutral { color: var(--muted); background: var(--surface-2); }
 
   label { display: block; color: var(--muted); font-size: 12px; margin-bottom: 5px; }
@@ -201,6 +202,7 @@
     </div>
     <nav>
       <button class="tab active" data-tab="overview" onclick="showTab('overview')">Overview</button>
+      <button class="tab" data-tab="alerts" onclick="showTab('alerts')">Alerts <span id="alertTabCount"></span></button>
       <button class="tab" data-tab="events" onclick="showTab('events')">Inbound Events</button>
       <button class="tab" data-tab="processed" onclick="showTab('processed')">Pushed</button>
       <button class="tab" data-tab="retries" onclick="showTab('retries')">Retries</button>
@@ -219,6 +221,17 @@
       <div class="card"><div class="stat-label">Pushed Records</div><div id="processedStat" class="stat-value">-</div><div class="stat-note">stored as processed</div></div>
       <div class="card"><div class="stat-label">Retry Queue</div><div id="retryStat" class="stat-value">-</div><div class="stat-note">Frappe/API retry items</div></div>
       <div class="card"><div class="stat-label">Last Push</div><div id="lastPushStat" class="stat-value">-</div><div id="lastPushNote" class="stat-note">no push yet</div></div>
+      <div class="card"><div class="stat-label">Open Alerts</div><div id="alertStat" class="stat-value">-</div><div class="stat-note">items needing attention</div></div>
+    </div>
+
+    <div id="alertSummaryCard" class="card hidden" style="margin-top:14px">
+      <div class="topbar">
+        <div>
+          <h2>Attention Needed</h2>
+          <div id="alertSummaryText" class="subtle">No unresolved alerts.</div>
+        </div>
+        <button class="secondary" onclick="showTab('alerts')">View Alerts</button>
+      </div>
     </div>
 
     <div class="grid two" style="margin-top:14px">
@@ -245,6 +258,24 @@
         <table>
           <thead><tr><th>Date</th><th>Employee</th><th>First Punch</th><th>First Result</th><th>Last Punch</th><th>Last Result</th><th>Count</th><th>Nodes / Devices</th></tr></thead>
           <tbody id="attendanceOverviewBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <section id="panel-alerts" class="hidden">
+    <div class="card">
+      <div class="topbar" style="margin-bottom:12px">
+        <div>
+          <h2>Alerts</h2>
+          <div class="subtle">People or punch records that were not pushed, are waiting for retry, or need mapping/config attention.</div>
+        </div>
+        <button class="secondary" onclick="refreshAll()">Refresh Alerts</button>
+      </div>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>Level</th><th>Issue</th><th>Employee</th><th>Device</th><th>Event Time</th><th>Detail</th><th>Action</th></tr></thead>
+          <tbody id="alertsBody"></tbody>
         </table>
       </div>
     </div>
@@ -430,7 +461,7 @@ async function api(path, options) {
 
 function showTab(name) {
   document.querySelectorAll(".tab").forEach(t => t.classList.toggle("active", t.dataset.tab === name));
-  ["overview", "events", "processed", "retries", "manual", "employee-map", "config"].forEach(p => {
+  ["overview", "alerts", "events", "processed", "retries", "manual", "employee-map", "config"].forEach(p => {
     $("panel-" + p).classList.toggle("hidden", p !== name);
   });
   if (name === "employee-map" && employeeMapEntries.length === 0) loadEmployeeMap();
@@ -440,14 +471,16 @@ function showTab(name) {
 
 async function refreshAll() {
   try {
-    const [status, events, processed, retries, overview] = await Promise.all([
+    const [status, alerts, events, processed, retries, overview] = await Promise.all([
       api("/api/status"),
+      api("/api/alerts"),
       api("/api/events"),
       api("/api/processed"),
       api("/api/retries"),
       api("/api/attendance-overview")
     ]);
     renderStatus(status);
+    renderAlerts(alerts.alerts || []);
     renderEvents(events.events || []);
     renderProcessed(processed.processed || []);
     renderRetries(retries.retries || []);
@@ -458,8 +491,37 @@ async function refreshAll() {
   }
 }
 
+function renderAlerts(rows) {
+  const actionable = rows.filter(row => row.kind !== "pending_queue");
+  $("alertStat").textContent = actionable.length;
+  $("alertTabCount").textContent = actionable.length ? `(${actionable.length})` : "";
+  $("alertSummaryCard").classList.toggle("hidden", actionable.length === 0);
+  $("alertSummaryText").textContent = actionable.length
+    ? `${actionable.length} item(s) need attention before all people are pushed correctly.`
+    : "No unresolved alerts.";
+
+  $("alertsBody").innerHTML = rows.length ? rows.map(row => `<tr>
+    <td>${alertPill(row.severity)}</td>
+    <td>${esc(row.title || row.kind)}</td>
+    <td>${esc(row.employee)}</td>
+    <td class="mono">${esc(row.device_ip)}</td>
+    <td>${esc(row.event_time)}</td>
+    <td>${esc(row.detail)}</td>
+    <td>${esc(row.action)}</td>
+  </tr>`).join("") : `<tr><td colspan="7" class="subtle">No alerts. All visible records are either queued normally or handled.</td></tr>`;
+}
+
+function alertPill(severity) {
+  const value = text(severity);
+  let cls = "neutral";
+  if (value === "critical") cls = "bad";
+  else if (value === "warning") cls = "warn";
+  else if (value === "info") cls = "info";
+  return `<span class="pill ${cls}">${esc(value)}</span>`;
+}
+
 function renderStatus(s) {
-  $("serverLine").textContent = `${s.server.host}:${s.server.port} · ${s.server.storage_backend} · ${s.server.hrms_url || "Frappe URL not set"} · every ${s.server.poll_interval}s`;
+  $("serverLine").textContent = `${s.server.host}:${s.server.port} · ${s.server.storage_backend} · ${s.server.hrms_url || "Frappe URL not set"} · manual Frappe push`;
   $("pendingStat").textContent = s.counts.pending;
   $("doneStat").textContent = s.counts.done;
   $("processedStat").textContent = s.counts.processed_total;
