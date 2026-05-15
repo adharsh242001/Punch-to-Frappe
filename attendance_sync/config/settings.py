@@ -80,8 +80,23 @@ HRMS_API_SECRET: str = os.getenv("HRMS_API_SECRET", "")
 
 # ── Default Check-in Metadata ────────────────────────────────────────────────
 DEFAULT_LOG_TYPE: str = os.getenv("DEFAULT_LOG_TYPE", "IN")
-LATITUDE: str | None = os.getenv("LATITUDE")
-LONGITUDE: str | None = os.getenv("LONGITUDE")
+
+
+def _optional_float(name: str, minimum: float, maximum: float) -> float | None:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return None
+    try:
+        value = float(raw)
+    except ValueError as exc:
+        raise ValueError(f"{name} must be a decimal number, got {raw!r}") from exc
+    if not minimum <= value <= maximum:
+        raise ValueError(f"{name} must be between {minimum} and {maximum}, got {raw!r}")
+    return value
+
+
+LATITUDE: float | None = _optional_float("LATITUDE", -90.0, 90.0)
+LONGITUDE: float | None = _optional_float("LONGITUDE", -180.0, 180.0)
 
 # ── Employee map ──────────────────────────────────────────────────────────────
 _MAP_PATH = _root_relative_path(os.getenv("EMPLOYEE_MAP", "employee_map.json"))

@@ -135,8 +135,8 @@ All runtime settings are read from `.env`.
 | `RETRY_MAX_ATTEMPTS` | `5` | Maximum retry attempts for transient Frappe/API errors. |
 | `RETRY_BACKOFF_BASE` | `2.0` | Exponential retry delay base. |
 | `DEFAULT_LOG_TYPE` | `IN` | Legacy default log type for one-event direct processing. The distributed first/last server push sends time-only punch records and does not assume IN/OUT. |
-| `LATITUDE` | empty | Optional latitude added to checkin records. |
-| `LONGITUDE` | empty | Optional longitude added to checkin records. |
+| `LATITUDE` | empty | Optional decimal latitude added to checkin records, for example `11.2545456`. |
+| `LONGITUDE` | empty | Optional decimal longitude added to checkin records, for example `75.8369735`. |
 | `LOG_LEVEL` | `INFO` | Logging level: `DEBUG`, `INFO`, `WARNING`, or `ERROR`. |
 | `LOG_FILE` | empty | Optional log file path. If empty, logs go to the console. |
 
