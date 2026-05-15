@@ -368,6 +368,13 @@ Start the edge agent on each PC:
 python attendance_sync\edge_agent.py
 ```
 
+To manually upload a specific date/time range from an edge PC to the central
+server without starting the continuous loop:
+
+```powershell
+python attendance_sync\edge_agent.py --from "2026-05-01 00:00:00" --to "2026-05-10 23:59:59"
+```
+
 If an edge PC cannot reach the central server, it does not advance its poll window; on the next cycle it fetches that same time range again and resends. The central server de-duplicates received batches, so repeat sends are safe.
 
 ## Running Manual Sync

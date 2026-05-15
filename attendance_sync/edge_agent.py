@@ -4,6 +4,7 @@ Edge attendance agent for a site PC.
 Polls the Hikvision devices reachable from this PC and sends signed batches to
 the central attendance_sync.server instance. It does not talk to Frappe.
 """
+import argparse
 import json
 import logging
 import signal
@@ -25,6 +26,44 @@ from transport.security import make_auth_headers
 
 logger = logging.getLogger(__name__)
 _running = True
+
+
+def _parse_datetime(value: str) -> datetime:
+    """
+    Parse CLI datetime input.
+
+    Accepted formats:
+      - 2026-05-01 09:00:00
+      - 2026-05-01T09:00:00
+      - 2026-05-01T09:00:00+05:30
+    """
+    normalized = value.strip().replace(" ", "T")
+    try:
+        return datetime.fromisoformat(normalized)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(
+            f"Invalid datetime {value!r}. Use ISO-like format such as "
+            "'2026-05-01 09:00:00' or '2026-05-01T09:00:00+05:30'."
+        ) from exc
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Run the edge sync agent or manually push a date range to the server."
+    )
+    parser.add_argument(
+        "--from",
+        dest="start_time",
+        type=_parse_datetime,
+        help="Start datetime for a one-time manual server push.",
+    )
+    parser.add_argument(
+        "--to",
+        dest="end_time",
+        type=_parse_datetime,
+        help="End datetime for a one-time manual server push.",
+    )
+    return parser.parse_args()
 
 
 def _setup_logging() -> None:
@@ -105,9 +144,47 @@ def send_events(events: list[dict[str, Any]]) -> None:
             )
 
 
+def run_manual_push(start_time: datetime, end_time: datetime) -> None:
+    """Fetch a specific date range from local devices and upload it to the server once."""
+    if start_time >= end_time:
+        raise ValueError("--from must be earlier than --to.")
+
+    logger.info(
+        "Manual edge push starting: node=%s devices=%s range=%s -> %s server=%s",
+        settings.EDGE_NODE_ID,
+        ", ".join(settings.DEVICE_IPS),
+        start_time.isoformat(),
+        end_time.isoformat(),
+        settings.SYNC_SERVER_URL,
+    )
+
+    events = fetch_device_events(start_time, end_time)
+    logger.info(
+        "Fetched %d event(s) for manual push: %s -> %s",
+        len(events),
+        start_time.isoformat(),
+        end_time.isoformat(),
+    )
+
+    if not events:
+        logger.info("No events found for manual push range.")
+        return
+
+    send_events(events)
+    logger.info("Manual edge push complete.")
+
+
 def main() -> None:
+    args = parse_args()
     _setup_logging()
     _validate_config()
+
+    if bool(args.start_time) != bool(args.end_time):
+        raise ValueError("Use both --from and --to for a manual server push.")
+    if args.start_time and args.end_time:
+        run_manual_push(args.start_time, args.end_time)
+        return
+
     signal.signal(signal.SIGINT, _handle_signal)
     signal.signal(signal.SIGTERM, _handle_signal)
 
