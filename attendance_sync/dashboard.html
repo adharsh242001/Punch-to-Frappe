@@ -197,11 +197,12 @@
       <div class="actions">
         <span id="refreshLine" class="subtle">Not refreshed yet</span>
         <button class="secondary" onclick="refreshAll()">Refresh</button>
-        <button onclick="pushNow()">Push Now</button>
+        <button onclick="pushNow()">Manual Push to Frappe</button>
       </div>
     </div>
     <nav>
       <button class="tab active" data-tab="overview" onclick="showTab('overview')">Overview</button>
+      <button class="tab" data-tab="first-last" onclick="showTab('first-last')">First / Last Punches</button>
       <button class="tab" data-tab="alerts" onclick="showTab('alerts')">Alerts <span id="alertTabCount"></span></button>
       <button class="tab" data-tab="events" onclick="showTab('events')">Inbound Events</button>
       <button class="tab" data-tab="processed" onclick="showTab('processed')">Pushed</button>
@@ -234,6 +235,16 @@
       </div>
     </div>
 
+    <div class="card" style="margin-top:14px">
+      <div class="topbar">
+        <div>
+          <h2>Frappe Queue Control</h2>
+          <div class="subtle">Automatic server-to-Frappe pushing is stopped. The server stores punches in the queue until you manually push them.</div>
+        </div>
+        <button onclick="pushNow()">Manual Push to Frappe</button>
+      </div>
+    </div>
+
     <div class="grid two" style="margin-top:14px">
       <div class="card">
         <h2>Edge Nodes</h2>
@@ -254,10 +265,39 @@
 
     <div class="card" style="margin-top:14px">
       <h2>Daily First / Last Punch Overview</h2>
+      <div class="actions" style="margin-bottom:10px">
+        <button class="secondary" onclick="showTab('first-last')">Open Full Page</button>
+        <button class="secondary" onclick="exportAttendanceCsv()">Export CSV</button>
+      </div>
       <div class="table-scroll">
         <table>
           <thead><tr><th>Date</th><th>Employee</th><th>First Punch</th><th>First Result</th><th>Last Punch</th><th>Last Result</th><th>Count</th><th>Nodes / Devices</th></tr></thead>
           <tbody id="attendanceOverviewBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <section id="panel-first-last" class="hidden">
+    <div class="card">
+      <div class="topbar" style="margin-bottom:12px">
+        <div>
+          <h2>Employee First In / Last Out</h2>
+          <div class="subtle">Review daily first punch in and last punch out before manually pushing to Frappe.</div>
+        </div>
+        <div class="actions">
+          <input id="firstLastFilter" placeholder="Search employee, node, or device" oninput="renderFirstLastPage()" style="width:260px" />
+          <input id="firstLastFrom" type="date" onchange="renderFirstLastPage()" style="width:150px" />
+          <input id="firstLastTo" type="date" onchange="renderFirstLastPage()" style="width:150px" />
+          <button class="secondary" onclick="clearFirstLastFilters()">Clear</button>
+          <button class="secondary" onclick="exportAttendanceCsv()">Export CSV</button>
+          <button onclick="pushNow()">Manual Push to Frappe</button>
+        </div>
+      </div>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>Date</th><th>Employee</th><th>First Punch In</th><th>First Result</th><th>Last Punch Out</th><th>Last Result</th><th>Total Punches</th><th>Nodes / Devices</th></tr></thead>
+          <tbody id="firstLastBody"></tbody>
         </table>
       </div>
     </div>
@@ -427,6 +467,7 @@
 let configCache = null;
 let nodeEdits = [];
 let employeeMapEntries = [];
+let attendanceOverviewRows = [];
 
 const cfgKeys = [
   "HRMS_URL", "HRMS_API_KEY", "HRMS_API_SECRET", "POLL_INTERVAL", "DEDUP_WINDOW",
@@ -461,9 +502,10 @@ async function api(path, options) {
 
 function showTab(name) {
   document.querySelectorAll(".tab").forEach(t => t.classList.toggle("active", t.dataset.tab === name));
-  ["overview", "alerts", "events", "processed", "retries", "manual", "employee-map", "config"].forEach(p => {
+  ["overview", "first-last", "alerts", "events", "processed", "retries", "manual", "employee-map", "config"].forEach(p => {
     $("panel-" + p).classList.toggle("hidden", p !== name);
   });
+  if (name === "first-last") renderFirstLastPage();
   if (name === "employee-map" && employeeMapEntries.length === 0) loadEmployeeMap();
   if (name === "config" && !configCache) loadConfig();
   if (name === "manual") buildManualCommand();
@@ -591,6 +633,7 @@ function renderRetries(rows) {
 }
 
 function renderAttendanceOverview(rows) {
+  attendanceOverviewRows = rows || [];
   $("attendanceOverviewBody").innerHTML = rows.length ? rows.map(r => `<tr>
     <td>${esc(r.date)}</td>
     <td>${esc(r.employee)}</td>
@@ -601,6 +644,89 @@ function renderAttendanceOverview(rows) {
     <td>${esc(r.punch_count)}</td>
     <td>${esc((r.source_nodes || []).join(", "))}<br><span class="subtle">${esc((r.devices || []).join(", "))}</span></td>
   </tr>`).join("") : `<tr><td colspan="8" class="subtle">No attendance overview yet</td></tr>`;
+  renderFirstLastPage();
+}
+
+function firstLastFilteredRows() {
+  const filter = ($("firstLastFilter")?.value || "").trim().toLowerCase();
+  const from = $("firstLastFrom")?.value || "";
+  const to = $("firstLastTo")?.value || "";
+  return attendanceOverviewRows.filter(row => {
+    const date = String(row.date || "");
+    if (from && date < from) return false;
+    if (to && date > to) return false;
+    if (!filter) return true;
+    const haystack = [
+      row.employee,
+      row.date,
+      row.first_time,
+      row.last_time,
+      ...(row.source_nodes || []),
+      ...(row.devices || [])
+    ].join(" ").toLowerCase();
+    return haystack.includes(filter);
+  });
+}
+
+function renderFirstLastPage() {
+  const body = $("firstLastBody");
+  if (!body) return;
+  const rows = firstLastFilteredRows();
+  body.innerHTML = rows.length ? rows.map(r => `<tr>
+    <td>${esc(r.date)}</td>
+    <td>${esc(r.employee)}</td>
+    <td>${esc(r.first_time)}</td>
+    <td>${resultPill(r.first_result)}</td>
+    <td>${esc(r.last_time)}</td>
+    <td>${resultPill(r.last_result)}</td>
+    <td>${esc(r.punch_count)}</td>
+    <td>${esc((r.source_nodes || []).join(", "))}<br><span class="subtle">${esc((r.devices || []).join(", "))}</span></td>
+  </tr>`).join("") : `<tr><td colspan="8" class="subtle">No first/last punch rows match the current filters</td></tr>`;
+}
+
+function clearFirstLastFilters() {
+  $("firstLastFilter").value = "";
+  $("firstLastFrom").value = "";
+  $("firstLastTo").value = "";
+  renderFirstLastPage();
+}
+
+function csvCell(value) {
+  const textValue = Array.isArray(value) ? value.join(", ") : text(value);
+  return `"${String(textValue).replace(/"/g, '""')}"`;
+}
+
+function exportAttendanceCsv() {
+  const rows = firstLastFilteredRows();
+  const header = [
+    "Date", "Employee", "First Punch In", "First Result", "Last Punch Out",
+    "Last Result", "Total Punches", "Nodes", "Devices"
+  ];
+  const lines = [header.map(csvCell).join(",")];
+  for (const row of rows) {
+    lines.push([
+      row.date,
+      row.employee,
+      row.first_time,
+      row.first_result,
+      row.last_time,
+      row.last_result,
+      row.punch_count,
+      row.source_nodes || [],
+      row.devices || []
+    ].map(csvCell).join(","));
+  }
+  const blob = new Blob([lines.join("\r\n") + "\r\n"], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  const stamp = new Date().toISOString().slice(0, 10);
+  link.href = url;
+  link.download = `first-last-punches-${stamp}.csv`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+  toast(`Exported ${rows.length} first/last row(s).`);
 }
 
 function resultPill(result) {

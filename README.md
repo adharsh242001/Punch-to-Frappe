@@ -4,8 +4,8 @@ Punch-to-Frappe reads punch events from Hikvision biometric/access-control devic
 
 It currently supports three workflows:
 
-- Continuous sync service: keeps polling devices and pushes new checkins to Frappe.
-- Manual date-range sync: backfills a specific period into Frappe.
+- Continuous sync service: keeps polling devices and pushes only each employee's first checkin and last checkout for each date.
+- Manual date-range sync: backfills a specific period into Frappe using the same first/last rule.
 - CSV export: downloads punch records from devices into a CSV for checking, mapping, or audit.
 - Distributed edge/server sync: PC A and PC B send signed punch batches to a central server, and only the server pushes to Frappe.
 
@@ -323,9 +323,9 @@ Open `http://central-server-ip:8090/` in a browser. The dashboard shows:
 - Pending / pushed / retry counters
 - Alert count and **Alerts** tab for punches that were not pushed, missing employee mappings, retry items, bad timestamps, and other issues needing resolution
 - Per-edge-node connection status (online / stale / offline / never connected) based on the last `/events` POST received
-- Daily first / last punch overview grouped by employee and date
+- A **First / Last Punches** page grouped by employee and date, with filters and CSV export
 - Recent inbound events, recently pushed checkins, and the retry queue
-- A **Push now** button that drains the queue and runs retries. In distributed server mode, Frappe push is manual; the server does not auto-push every 600 seconds.
+- A **Manual Push to Frappe** button that drains the queue and runs retries. In distributed server mode, Frappe push is manual; the server does not auto-push every 600 seconds.
 - The last push run, including trigger, result breakdown, and retry count
 - An **Employee Map** tab for adding, editing, searching, and removing device employee number to Frappe employee ID mappings. Restart the server after saving so the processor reloads the map.
 - A **Configuration** tab where you can edit `HRMS_URL`, `HRMS_API_KEY`, `HRMS_API_SECRET`, `SERVER_NODE_KEYS` (add/remove edge nodes), poll/dedup intervals, log level and storage settings. Edits are written back to `.env` (or the mounted `.env.server` in Docker); restart the server to apply.

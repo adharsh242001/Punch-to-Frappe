@@ -9,6 +9,7 @@ queue, per-node connection status, and a manual "Push now" button.
 """
 import json
 import logging
+import errno
 import signal
 import sys
 import threading
@@ -285,11 +286,25 @@ def _save_employee_map(body: dict[str, Any]) -> int:
 
     path = settings.employee_map_path()
     path.parent.mkdir(parents=True, exist_ok=True)
+    content = json.dumps(employee_map, indent=2, sort_keys=True) + "\n"
     tmp_path = path.with_suffix(path.suffix + ".tmp")
     with tmp_path.open("w", encoding="utf-8") as fh:
-        json.dump(employee_map, fh, indent=2, sort_keys=True)
-        fh.write("\n")
-    tmp_path.replace(path)
+        fh.write(content)
+    try:
+        tmp_path.replace(path)
+    except OSError as exc:
+        if exc.errno != errno.EBUSY:
+            raise
+        logger.warning(
+            "Could not atomically replace employee map at %s; falling back to in-place write.",
+            path,
+        )
+        with path.open("w", encoding="utf-8") as fh:
+            fh.write(content)
+        try:
+            tmp_path.unlink()
+        except FileNotFoundError:
+            pass
     return len(employee_map)
 
 
