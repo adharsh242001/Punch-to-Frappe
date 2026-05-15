@@ -283,7 +283,7 @@
       <div class="topbar" style="margin-bottom:12px">
         <div>
           <h2>Employee First In / Last Out</h2>
-          <div class="subtle">Review daily first punch in and last punch out before manually pushing to Frappe.</div>
+          <div class="subtle">Review daily first and last punch times before manually pushing to Frappe. The device does not provide in/out direction.</div>
         </div>
         <div class="actions">
           <input id="firstLastFilter" placeholder="Search employee, node, or device" oninput="renderFirstLastPage()" style="width:260px" />
@@ -296,7 +296,7 @@
       </div>
       <div class="table-scroll">
         <table>
-          <thead><tr><th>Date</th><th>Employee</th><th>First Punch In</th><th>First Result</th><th>Last Punch Out</th><th>Last Result</th><th>Total Punches</th><th>Nodes / Devices</th></tr></thead>
+          <thead><tr><th>Date</th><th>Employee</th><th>First Punch Time</th><th>First Result</th><th>Last Punch Time</th><th>Last Result</th><th>Total Punches</th><th>Nodes / Devices</th></tr></thead>
           <tbody id="firstLastBody"></tbody>
         </table>
       </div>
@@ -418,7 +418,7 @@
         <div class="field"><label>HRMS URL</label><input id="cfg-HRMS_URL" /></div>
         <div class="field"><label>API Key <span id="hint-HRMS_API_KEY" class="subtle"></span></label><input id="cfg-HRMS_API_KEY" type="password" placeholder="leave blank to keep current" /></div>
         <div class="field"><label>API Secret <span id="hint-HRMS_API_SECRET" class="subtle"></span></label><input id="cfg-HRMS_API_SECRET" type="password" placeholder="leave blank to keep current" /></div>
-        <div class="field"><label>Default Log Type</label><input id="cfg-DEFAULT_LOG_TYPE" /></div>
+        <div class="field"><label>Legacy Default Log Type</label><input id="cfg-DEFAULT_LOG_TYPE" /></div>
       </div>
       <div class="card">
         <h2>Server</h2>
@@ -699,7 +699,7 @@ function csvCell(value) {
 function exportAttendanceCsv() {
   const rows = firstLastFilteredRows();
   const header = [
-    "Date", "Employee", "First Punch In", "First Result", "Last Punch Out",
+    "Date", "Employee", "First Punch Time", "First Result", "Last Punch Time",
     "Last Result", "Total Punches", "Nodes", "Devices"
   ];
   const lines = [header.map(csvCell).join(",")];

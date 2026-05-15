@@ -203,7 +203,7 @@ class EventProcessor:
             longitude=settings.LONGITUDE,
         )
 
-    def push_prepared_event(self, prepared: dict[str, Any], log_type: str) -> str:
+    def push_prepared_event(self, prepared: dict[str, Any], log_type: str | None = None) -> str:
         """Push a prepared event with the supplied log type."""
         return self._push_checkin(
             hrms_id=prepared["hrms_id"],

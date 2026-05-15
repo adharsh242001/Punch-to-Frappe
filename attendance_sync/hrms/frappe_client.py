@@ -70,7 +70,7 @@ class FrappeClient:
         device_id:
             Friendly name or IP of the source device.
         log_type:
-            "IN" or "OUT".
+            Optional Frappe log type. Omitted for time-only punch workflows.
         latitude / longitude:
             Geographical coordinates.
 
