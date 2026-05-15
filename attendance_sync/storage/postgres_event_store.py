@@ -359,16 +359,17 @@ class PostgresEventStore:
         ).fetchall()
         return [dict(row) for row in rows]
 
-    def attendance_overview(self, limit: int = 5000) -> list[dict[str, Any]]:
-        rows = self._conn().execute(
-            """
+    def attendance_overview(self, limit: int | None = None) -> list[dict[str, Any]]:
+        query = """
             SELECT source_node, payload, status, last_result
             FROM inbound_events
             ORDER BY id DESC
-            LIMIT %s
-            """,
-            (limit,),
-        ).fetchall()
+        """
+        params: tuple[Any, ...] = ()
+        if limit is not None:
+            query += " LIMIT %s"
+            params = (limit,)
+        rows = self._conn().execute(query, params).fetchall()
         grouped: dict[tuple[str, str], dict[str, Any]] = {}
         for row in rows:
             payload = row["payload"] if isinstance(row["payload"], dict) else json.loads(row["payload"])
@@ -414,7 +415,7 @@ class PostgresEventStore:
             item["devices"] = sorted(item["devices"])
             overview.append(item)
         overview.sort(key=lambda item: (item["date"], item["employee"]), reverse=True)
-        return overview[:200]
+        return overview
 
     def dashboard_alerts(self, limit: int = 100) -> list[dict[str, Any]]:
         alerts: list[dict[str, Any]] = []

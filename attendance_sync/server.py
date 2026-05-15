@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qs, urlparse
 
 import os as _os
 _os.chdir(_os.path.dirname(_os.path.abspath(__file__)))
@@ -75,6 +76,15 @@ _EDITABLE_KEYS = (
     "POSTGRES_DSN",
     "DEFAULT_LOG_TYPE",
 )
+
+
+def _int_query(params: dict[str, list[str]], key: str, default: int, minimum: int, maximum: int) -> int:
+    raw = (params.get(key) or [""])[0]
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        value = default
+    return max(minimum, min(maximum, value))
 
 
 class NodeTracker:
@@ -308,6 +318,38 @@ def _save_employee_map(body: dict[str, Any]) -> int:
     return len(employee_map)
 
 
+def _filter_attendance_overview(
+    rows: list[dict[str, Any]],
+    search: str = "",
+    date_from: str = "",
+    date_to: str = "",
+) -> list[dict[str, Any]]:
+    search_text = search.lower()
+    filtered: list[dict[str, Any]] = []
+    for row in rows:
+        date = str(row.get("date") or "")
+        if date_from and date < date_from:
+            continue
+        if date_to and date > date_to:
+            continue
+        if search_text:
+            haystack = " ".join(
+                str(part)
+                for part in [
+                    row.get("employee"),
+                    row.get("date"),
+                    row.get("first_time"),
+                    row.get("last_time"),
+                    *(row.get("source_nodes") or []),
+                    *(row.get("devices") or []),
+                ]
+            ).lower()
+            if search_text not in haystack:
+                continue
+        filtered.append(row)
+    return filtered
+
+
 def process_pending_events(store: Any, processor: EventProcessor) -> dict[str, Any]:
     """Drain queued inbound events and run retry queue. Thread-safe."""
     with _push_lock:
@@ -423,7 +465,9 @@ class EventIngestHandler(BaseHTTPRequestHandler):
             self._safe_json_response(500, {"ok": False, "error": str(exc)})
 
     def _dispatch_get(self) -> None:
-        path = self.path.split("?", 1)[0]
+        parsed = urlparse(self.path)
+        path = parsed.path
+        query = parse_qs(parsed.query)
         if path == "/health":
             _json_response(
                 self, 200,
@@ -440,7 +484,28 @@ class EventIngestHandler(BaseHTTPRequestHandler):
             _json_response(self, 200, {"events": self.store.recent_inbound(100)})
             return
         if path == "/api/attendance-overview":
-            _json_response(self, 200, {"overview": self.store.attendance_overview()})
+            page = _int_query(query, "page", 1, 1, 100000)
+            page_size = _int_query(query, "page_size", 100, 10, 1000)
+            search = (query.get("search") or [""])[0].strip()
+            date_from = (query.get("from") or [""])[0].strip()
+            date_to = (query.get("to") or [""])[0].strip()
+            all_rows = self.store.attendance_overview(limit=None)
+            filtered_rows = _filter_attendance_overview(all_rows, search, date_from, date_to)
+            total = len(filtered_rows)
+            start = (page - 1) * page_size
+            end = start + page_size
+            _json_response(
+                self,
+                200,
+                {
+                    "overview": filtered_rows[start:end],
+                    "page": page,
+                    "page_size": page_size,
+                    "total": total,
+                    "has_next": end < total,
+                    "has_prev": page > 1,
+                },
+            )
             return
         if path == "/api/alerts":
             _json_response(self, 200, {"alerts": self.store.dashboard_alerts()})

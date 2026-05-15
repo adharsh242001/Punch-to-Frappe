@@ -323,7 +323,7 @@ Open `http://central-server-ip:8090/` in a browser. The dashboard shows:
 - Pending / pushed / retry counters
 - Alert count and **Alerts** tab for punches that were not pushed, missing employee mappings, retry items, bad timestamps, and other issues needing resolution
 - Per-edge-node connection status (online / stale / offline / never connected) based on the last `/events` POST received
-- A **First / Last Punches** page grouped by employee and date, with filters and CSV export
+- A paginated **First / Last Punches** page grouped by employee and date, with filters and CSV export for the full filtered result set
 - Recent inbound events, recently pushed checkins, and the retry queue
 - A **Manual Push to Frappe** button that drains the queue and runs retries. In distributed server mode, Frappe push is manual; the server does not auto-push every 600 seconds.
 - The last push run, including trigger, result breakdown, and retry count

@@ -370,16 +370,17 @@ class EventStore:
         )
         return [dict(row) for row in cur.fetchall()]
 
-    def attendance_overview(self, limit: int = 5000) -> list[dict[str, Any]]:
-        cur = self._conn().execute(
-            """
+    def attendance_overview(self, limit: int | None = None) -> list[dict[str, Any]]:
+        query = """
             SELECT source_node, payload, status, last_result
             FROM inbound_events
             ORDER BY id DESC
-            LIMIT ?
-            """,
-            (limit,),
-        )
+        """
+        params: tuple[Any, ...] = ()
+        if limit is not None:
+            query += " LIMIT ?"
+            params = (limit,)
+        cur = self._conn().execute(query, params)
         grouped: dict[tuple[str, str], dict[str, Any]] = {}
         for row in cur.fetchall():
             try:
@@ -429,7 +430,7 @@ class EventStore:
             item["devices"] = sorted(item["devices"])
             overview.append(item)
         overview.sort(key=lambda item: (item["date"], item["employee"]), reverse=True)
-        return overview[:200]
+        return overview
 
     def dashboard_alerts(self, limit: int = 100) -> list[dict[str, Any]]:
         alerts: list[dict[str, Any]] = []
