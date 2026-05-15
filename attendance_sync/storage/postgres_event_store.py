@@ -243,17 +243,18 @@ class PostgresEventStore:
 
         return inserted, skipped
 
-    def get_pending_inbound_events(self, limit: int = 20000) -> list[dict[str, Any]]:
-        rows = self._conn().execute(
-            """
+    def get_pending_inbound_events(self, limit: int | None = None) -> list[dict[str, Any]]:
+        query = """
             SELECT id, source_node, payload
             FROM inbound_events
             WHERE status = 'pending'
             ORDER BY received_at, id
-            LIMIT %s
-            """,
-            (limit,),
-        ).fetchall()
+        """
+        params: tuple[Any, ...] = ()
+        if limit is not None:
+            query += " LIMIT %s"
+            params = (limit,)
+        rows = self._conn().execute(query, params).fetchall()
         return [
             {
                 "id": row["id"],
