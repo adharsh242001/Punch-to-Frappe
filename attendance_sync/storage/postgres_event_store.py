@@ -20,7 +20,11 @@ class PostgresEventStore:
 
     def _conn(self) -> psycopg.Connection:
         if not hasattr(self._local, "conn"):
-            self._local.conn = psycopg.connect(self._dsn, row_factory=dict_row)
+            self._local.conn = psycopg.connect(
+                self._dsn,
+                row_factory=dict_row,
+                autocommit=True,
+            )
         return self._local.conn
 
     def close(self) -> None:

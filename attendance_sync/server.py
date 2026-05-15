@@ -317,6 +317,13 @@ class EventIngestHandler(BaseHTTPRequestHandler):
     # ── routing ──────────────────────────────────────────────────────────────
 
     def do_GET(self) -> None:
+        try:
+            self._dispatch_get()
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Unhandled GET %s failed", self.path)
+            self._safe_json_response(500, {"ok": False, "error": str(exc)})
+
+    def _dispatch_get(self) -> None:
         path = self.path.split("?", 1)[0]
         if path == "/health":
             _json_response(
@@ -345,6 +352,13 @@ class EventIngestHandler(BaseHTTPRequestHandler):
         _json_response(self, 404, {"error": "not_found"})
 
     def do_POST(self) -> None:
+        try:
+            self._dispatch_post()
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Unhandled POST %s failed", self.path)
+            self._safe_json_response(500, {"ok": False, "error": str(exc)})
+
+    def _dispatch_post(self) -> None:
         if self.path == "/events":
             self._handle_events_post()
             return
@@ -361,6 +375,12 @@ class EventIngestHandler(BaseHTTPRequestHandler):
             self._handle_config_post()
             return
         _json_response(self, 404, {"error": "not_found"})
+
+    def _safe_json_response(self, status: int, payload: Any) -> None:
+        try:
+            _json_response(self, status, payload)
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+            logger.debug("HTTP client disconnected before error response was sent")
 
     def _handle_config_post(self) -> None:
         length = int(self.headers.get("Content-Length", "0"))
