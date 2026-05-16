@@ -383,19 +383,19 @@ def process_pending_events(store: Any, processor: EventProcessor) -> dict[str, A
                 first = items[0]
                 last = items[-1]
                 selected_ids.add(first["row"]["id"])
-                first_result = processor.push_prepared_event(first["prepared"])
-                store.mark_inbound_processed(first["row"]["id"], f"first_punch_{first_result}")
-                results[f"first_punch_{first_result}"] = (
-                    results.get(f"first_punch_{first_result}", 0) + 1
+                first_result = processor.push_prepared_event(first["prepared"], log_type="IN")
+                store.mark_inbound_processed(first["row"]["id"], f"first_punch_in_{first_result}")
+                results[f"first_punch_in_{first_result}"] = (
+                    results.get(f"first_punch_in_{first_result}", 0) + 1
                 )
                 processed += 1
 
                 if last["row"]["id"] != first["row"]["id"]:
                     selected_ids.add(last["row"]["id"])
-                    last_result = processor.push_prepared_event(last["prepared"])
-                    store.mark_inbound_processed(last["row"]["id"], f"last_punch_{last_result}")
-                    results[f"last_punch_{last_result}"] = (
-                        results.get(f"last_punch_{last_result}", 0) + 1
+                    last_result = processor.push_prepared_event(last["prepared"], log_type="OUT")
+                    store.mark_inbound_processed(last["row"]["id"], f"last_punch_out_{last_result}")
+                    results[f"last_punch_out_{last_result}"] = (
+                        results.get(f"last_punch_out_{last_result}", 0) + 1
                     )
                     processed += 1
 

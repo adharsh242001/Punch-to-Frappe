@@ -112,15 +112,15 @@ def process_first_last_events(
         punches.sort(key=lambda item: item["event_dt"])
 
         first_punch = punches[0]
-        first_result = processor.push_prepared_event(first_punch)
+        first_result = processor.push_prepared_event(first_punch, "IN")
         pushed_serials.add(str(first_punch["serial_no"]))
-        count(f"first_punch_{first_result}")
+        count(f"first_punch_in_{first_result}")
 
         last_punch = punches[-1]
         if str(last_punch["serial_no"]) != str(first_punch["serial_no"]):
-            last_result = processor.push_prepared_event(last_punch)
+            last_result = processor.push_prepared_event(last_punch, "OUT")
             pushed_serials.add(str(last_punch["serial_no"]))
-            count(f"last_punch_{last_result}")
+            count(f"last_punch_out_{last_result}")
 
     for prepared in ready_events:
         if str(prepared["serial_no"]) in pushed_serials:
@@ -209,7 +209,7 @@ def main() -> None:
 
     logger.info(
         "Devices: %s | Poll interval: %ds | Dedup window: %ds | "
-        "Frappe push: first and last punch time per employee/day",
+        "Frappe push: first punch IN and last punch OUT per employee/day",
         ", ".join(settings.DEVICE_IPS),
         settings.POLL_INTERVAL,
         settings.DEDUP_WINDOW,

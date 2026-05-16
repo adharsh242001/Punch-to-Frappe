@@ -4,7 +4,7 @@ Punch-to-Frappe reads punch events from Hikvision biometric/access-control devic
 
 It currently supports three workflows:
 
-- Continuous sync service: keeps polling devices and pushes only each employee's first and last punch time for each date.
+- Continuous sync service: keeps polling devices and pushes only each employee's first punch as `IN` and last punch as `OUT` for each date.
 - Manual date-range sync: backfills a specific period into Frappe using the same first/last rule.
 - CSV export: downloads punch records from devices into a CSV for checking, mapping, or audit.
 - Distributed edge/server sync: PC A and PC B send signed punch batches to a central server, and only the server pushes to Frappe.
@@ -20,7 +20,7 @@ It currently supports three workflows:
 
 3. The device returns punch events containing values like employee number, employee name, punch time, serial number, and source device.
 4. The employee number from the device is matched against `employee_map.json`.
-5. In distributed server mode, the central server keeps all received raw punches for audit, but only pushes each employee's first punch time and last punch time for each date to Frappe HRMS. Hikvision punch data is treated as time-only; the system does not assume the device tells us IN or OUT.
+5. In distributed server mode, the central server keeps all received raw punches for audit, but only pushes each employee's first punch as `IN` and last punch as `OUT` for each date to Frappe HRMS. The device only provides punch times; the `IN`/`OUT` direction is derived by this server rule.
 6. Successfully processed event serial numbers are stored in SQLite so the same event is not pushed again.
 7. Temporary Frappe/API failures are saved into a retry queue and retried later.
 
@@ -134,7 +134,7 @@ All runtime settings are read from `.env`.
 | `STORE_PATH` | `data/events.db` | SQLite database for processed events, last punch times, and retries. |
 | `RETRY_MAX_ATTEMPTS` | `5` | Maximum retry attempts for transient Frappe/API errors. |
 | `RETRY_BACKOFF_BASE` | `2.0` | Exponential retry delay base. |
-| `DEFAULT_LOG_TYPE` | `IN` | Legacy default log type for one-event direct processing. The distributed first/last server push sends time-only punch records and does not assume IN/OUT. |
+| `DEFAULT_LOG_TYPE` | `IN` | Default log type for one-event direct processing. Distributed first/last server push derives `IN` for the first punch and `OUT` for the last punch. |
 | `LATITUDE` | empty | Optional decimal latitude added to checkin records, for example `11.2545456`. |
 | `LONGITUDE` | empty | Optional decimal longitude added to checkin records, for example `75.8369735`. |
 | `LOG_LEVEL` | `INFO` | Logging level: `DEBUG`, `INFO`, `WARNING`, or `ERROR`. |

@@ -218,8 +218,8 @@
   <section id="panel-overview">
     <div class="grid stats">
       <div class="card"><div class="stat-label">Pending Queue</div><div id="pendingStat" class="stat-value">-</div><div class="stat-note">waiting for Frappe push</div></div>
-      <div class="card"><div class="stat-label">Handled Queue</div><div id="doneStat" class="stat-value">-</div><div class="stat-note">inbound rows completed</div></div>
-      <div class="card"><div class="stat-label">Pushed Records</div><div id="processedStat" class="stat-value">-</div><div class="stat-note">stored as processed</div></div>
+      <div class="card"><div class="stat-label">Handled by Server</div><div id="doneStat" class="stat-value">-</div><div class="stat-note">includes skipped/retry/error rows</div></div>
+      <div class="card"><div class="stat-label">Frappe Accepted</div><div id="processedStat" class="stat-value">-</div><div class="stat-note">pushed or accepted duplicate</div></div>
       <div class="card"><div class="stat-label">Retry Queue</div><div id="retryStat" class="stat-value">-</div><div class="stat-note">Frappe/API retry items</div></div>
       <div class="card"><div class="stat-label">Last Push</div><div id="lastPushStat" class="stat-value">-</div><div id="lastPushNote" class="stat-note">no push yet</div></div>
       <div class="card"><div class="stat-label">Open Alerts</div><div id="alertStat" class="stat-value">-</div><div class="stat-note">items needing attention</div></div>
@@ -623,10 +623,17 @@ function renderNodeRow(n) {
 
 function renderEvents(rows) {
   $("eventsBody").innerHTML = rows.length ? rows.map(r => `<tr>
-    <td>${esc(r.id)}</td><td><span class="pill ${r.status === "done" ? "good" : "warn"}">${esc(r.status)}</span></td>
+    <td>${esc(r.id)}</td><td>${inboundStatusPill(r)}</td>
     <td class="mono">${esc(r.source_node)}</td><td>${esc(r.employee)}</td><td class="mono">${esc(r.device_ip)}</td>
     <td>${esc(r.event_time)}</td><td>${fmtTime(r.received_at)}</td><td>${esc(r.last_result)}</td>
   </tr>`).join("") : `<tr><td colspan="8" class="subtle">No inbound events</td></tr>`;
+}
+function inboundStatusPill(r) {
+  const result = text(r.last_result);
+  if (result.includes("error") || result.includes("missing") || result.includes("bad")) {
+    return `<span class="pill warn">needs attention</span>`;
+  }
+  return `<span class="pill ${r.status === "done" ? "good" : "warn"}">${esc(r.status)}</span>`;
 }
 function renderProcessed(rows) {
   $("processedBody").innerHTML = rows.length ? rows.map(r => `<tr>

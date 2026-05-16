@@ -448,6 +448,10 @@ class PostgresEventStore:
                     "action": "Check Frappe connectivity/credentials, then use Push Now.",
                 }
             )
+        retry_details = {
+            row["serial_no"]: f"{row['last_error'] or 'waiting for retry'} (attempts: {row['attempts']})"
+            for row in retry_rows
+        }
 
         bad_rows = self._conn().execute(
             """
@@ -472,6 +476,11 @@ class PostgresEventStore:
                 action = "Check the device clock/time format."
             elif "missing_serial" in result:
                 action = "Check the device event payload; serial number is required for dedupe."
+            elif "queued_client_error" in result:
+                action = "Fix the Frappe validation error shown here, then use Manual Push to Frappe."
+            serial_no = str(payload.get("serialNo") or "").strip()
+            namespaced_serial = f"{row['source_node']}:{serial_no}" if serial_no else ""
+            detail = retry_details.get(namespaced_serial) or result
             alerts.append(
                 {
                     "severity": "critical" if "missing_mapping" in result else "warning",
@@ -481,7 +490,7 @@ class PostgresEventStore:
                     "device_ip": payload.get("deviceIP"),
                     "event_time": payload.get("time"),
                     "source_node": row["source_node"],
-                    "detail": result,
+                    "detail": detail,
                     "action": action,
                     "received_at": row["received_at"],
                     "processed_at": row["processed_at"],
