@@ -4,8 +4,8 @@ Punch-to-Frappe reads punch events from Hikvision biometric/access-control devic
 
 It currently supports three workflows:
 
-- Continuous sync service: keeps polling devices and pushes only each employee's first punch as `IN` and last punch as `OUT` for each date.
-- Manual date-range sync: backfills a specific period into Frappe using the same first/last rule.
+- Continuous sync service: keeps polling devices and pushes boundary punches for each employee/date.
+- Manual date-range sync: backfills a specific period into Frappe using the same boundary-punch rule.
 - CSV export: downloads punch records from devices into a CSV for checking, mapping, or audit.
 - Distributed edge/server sync: PC A and PC B send signed punch batches to a central server, and only the server pushes to Frappe.
 
@@ -20,7 +20,7 @@ It currently supports three workflows:
 
 3. The device returns punch events containing values like employee number, employee name, punch time, serial number, and source device.
 4. The employee number from the device is matched against `employee_map.json`.
-5. In distributed server mode, the central server keeps all received raw punches for audit, but only pushes each employee's first punch as `IN` and last punch as `OUT` for each date to Frappe HRMS. The device only provides punch times; the `IN`/`OUT` direction is derived by this server rule.
+5. In distributed server mode, the central server keeps all received raw punches for audit, but only pushes boundary punches for each employee/date to Frappe HRMS. With 4 or more punches it pushes first `IN`, second punch without log type, second-last punch without log type, and last `OUT`. With fewer punches it pushes first `IN` and last `OUT`. The device only provides punch times; only the first and last boundary punches get derived `IN`/`OUT`.
 6. Successfully processed event serial numbers are stored in SQLite so the same event is not pushed again.
 7. Temporary Frappe/API failures are saved into a retry queue and retried later.
 
@@ -134,7 +134,7 @@ All runtime settings are read from `.env`.
 | `STORE_PATH` | `data/events.db` | SQLite database for processed events, last punch times, and retries. |
 | `RETRY_MAX_ATTEMPTS` | `5` | Maximum retry attempts for transient Frappe/API errors. |
 | `RETRY_BACKOFF_BASE` | `2.0` | Exponential retry delay base. |
-| `DEFAULT_LOG_TYPE` | `IN` | Default log type for one-event direct processing. Distributed first/last server push derives `IN` for the first punch and `OUT` for the last punch. |
+| `DEFAULT_LOG_TYPE` | `IN` | Default log type for one-event direct processing. Distributed server push derives log types from the boundary-punch rule. |
 | `LATITUDE` | empty | Optional decimal latitude added to checkin records, for example `11.2545456`. |
 | `LONGITUDE` | empty | Optional decimal longitude added to checkin records, for example `75.8369735`. |
 | `LOG_LEVEL` | `INFO` | Logging level: `DEBUG`, `INFO`, `WARNING`, or `ERROR`. |
@@ -324,9 +324,10 @@ Open `http://central-server-ip:8090/` in a browser. The dashboard shows:
 - Pending / pushed / retry counters
 - Alert count and **Alerts** tab for punches that were not pushed, missing employee mappings, retry items, bad timestamps, and other issues needing resolution
 - Per-edge-node connection status (online / stale / offline / never connected) based on the last `/events` POST received
-- A paginated **First / Last Punches** page grouped by employee and date, with filters and CSV export for the full filtered result set
+- A paginated **Boundary Punches** page grouped by employee and date, with filters and CSV export for the full filtered result set
 - Recent inbound events, recently pushed checkins, and the retry queue
 - A **Manual Push to Frappe** button that drains the queue and runs retries. In distributed server mode, Frappe push is manual; the server does not auto-push every 600 seconds.
+- Every pushed `Employee Checkin` sets `skip_auto_attendance` to `0`.
 - The last push run, including trigger, result breakdown, and retry count
 - An **Employee Map** tab for adding, editing, searching, and removing device employee number to Frappe employee ID mappings. Restart the server after saving so the processor reloads the map.
 - A **Configuration** tab where you can edit `HRMS_URL`, `HRMS_API_KEY`, `HRMS_API_SECRET`, `SERVER_NODE_KEYS` (add/remove edge nodes), poll/dedup intervals, log level and storage settings. Edits are written back to `.env` (or the mounted `.env.server` in Docker); restart the server to apply.

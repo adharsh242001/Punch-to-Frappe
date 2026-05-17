@@ -409,8 +409,13 @@ class EventStore:
                     "punch_count": 0,
                     "first_time": None,
                     "first_result": None,
+                    "second_time": None,
+                    "second_result": None,
+                    "second_last_time": None,
+                    "second_last_result": None,
                     "last_time": None,
                     "last_result": None,
+                    "_events": [],
                 },
             )
             item["source_nodes"].add(row["source_node"])
@@ -418,6 +423,12 @@ class EventStore:
             if device_ip:
                 item["devices"].add(str(device_ip))
             item["punch_count"] += 1
+            item["_events"].append(
+                {
+                    "time": event_time,
+                    "result": row["last_result"] or row["status"],
+                }
+            )
 
             if item["first_time"] is None or event_time < item["first_time"]:
                 item["first_time"] = event_time
@@ -428,6 +439,12 @@ class EventStore:
 
         overview = []
         for item in grouped.values():
+            events = sorted(item.pop("_events"), key=lambda event: event["time"])
+            if len(events) >= 4:
+                item["second_time"] = events[1]["time"]
+                item["second_result"] = events[1]["result"]
+                item["second_last_time"] = events[-2]["time"]
+                item["second_last_result"] = events[-2]["result"]
             item["source_nodes"] = sorted(item["source_nodes"])
             item["devices"] = sorted(item["devices"])
             overview.append(item)

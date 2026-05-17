@@ -88,6 +88,7 @@ class FrappeClient:
             "employee": employee,
             "time": event_time,
             "device_id": device_id,
+            "skip_auto_attendance": 0,
         }
         if log_type:
             payload["log_type"] = log_type

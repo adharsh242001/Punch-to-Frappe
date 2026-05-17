@@ -202,7 +202,7 @@
     </div>
     <nav>
       <button class="tab active" data-tab="overview" onclick="showTab('overview')">Overview</button>
-      <button class="tab" data-tab="first-last" onclick="showTab('first-last')">First / Last Punches</button>
+      <button class="tab" data-tab="first-last" onclick="showTab('first-last')">Boundary Punches</button>
       <button class="tab" data-tab="alerts" onclick="showTab('alerts')">Alerts <span id="alertTabCount"></span></button>
       <button class="tab" data-tab="events" onclick="showTab('events')">Inbound Events</button>
       <button class="tab" data-tab="processed" onclick="showTab('processed')">Pushed</button>
@@ -264,14 +264,14 @@
     </div>
 
     <div class="card" style="margin-top:14px">
-      <h2>Daily First / Last Punch Overview</h2>
+      <h2>Daily Boundary Punch Overview</h2>
       <div class="actions" style="margin-bottom:10px">
         <button class="secondary" onclick="showTab('first-last')">Open Full Page</button>
         <button class="secondary" onclick="exportAttendanceCsv()">Export CSV</button>
       </div>
       <div class="table-scroll">
         <table>
-          <thead><tr><th>Date</th><th>Employee</th><th>First Punch</th><th>First Result</th><th>Last Punch</th><th>Last Result</th><th>Count</th><th>Nodes / Devices</th></tr></thead>
+          <thead><tr><th>Date</th><th>Employee</th><th>First IN</th><th>Second Punch</th><th>Second Last Punch</th><th>Last OUT</th><th>Count</th><th>Nodes / Devices</th></tr></thead>
           <tbody id="attendanceOverviewBody"></tbody>
         </table>
       </div>
@@ -282,8 +282,8 @@
     <div class="card">
       <div class="topbar" style="margin-bottom:12px">
         <div>
-          <h2>Employee First In / Last Out</h2>
-          <div class="subtle">Review daily first and last punch times before manually pushing to Frappe. The device does not provide in/out direction.</div>
+          <h2>Employee Boundary Punches</h2>
+          <div class="subtle">When 4+ punches exist, the server sends first IN, second punch, second-last punch, and last OUT. The two middle boundary punches have no IN/OUT log type.</div>
         </div>
         <div class="actions">
           <input id="firstLastFilter" placeholder="Search employee, node, or device" oninput="scheduleFirstLastReload()" style="width:260px" />
@@ -297,7 +297,7 @@
       </div>
       <div class="table-scroll">
         <table>
-          <thead><tr><th>Date</th><th>Employee</th><th>First Punch Time</th><th>First Result</th><th>Last Punch Time</th><th>Last Result</th><th>Total Punches</th><th>Nodes / Devices</th></tr></thead>
+          <thead><tr><th>Date</th><th>Employee</th><th>First IN</th><th>Second Punch</th><th>Second Last Punch</th><th>Last OUT</th><th>Total Punches</th><th>Nodes / Devices</th></tr></thead>
           <tbody id="firstLastBody"></tbody>
         </table>
       </div>
@@ -654,14 +654,18 @@ function renderAttendanceOverview(rows) {
   $("attendanceOverviewBody").innerHTML = previewRows.length ? previewRows.map(r => `<tr>
     <td>${esc(r.date)}</td>
     <td>${esc(r.employee)}</td>
-    <td>${esc(r.first_time)}</td>
-    <td>${resultPill(r.first_result)}</td>
-    <td>${esc(r.last_time)}</td>
-    <td>${resultPill(r.last_result)}</td>
+    <td>${punchCell(r.first_time, r.first_result)}</td>
+    <td>${punchCell(r.second_time, r.second_result)}</td>
+    <td>${punchCell(r.second_last_time, r.second_last_result)}</td>
+    <td>${punchCell(r.last_time, r.last_result)}</td>
     <td>${esc(r.punch_count)}</td>
     <td>${esc((r.source_nodes || []).join(", "))}<br><span class="subtle">${esc((r.devices || []).join(", "))}</span></td>
   </tr>`).join("") : `<tr><td colspan="8" class="subtle">No attendance overview yet</td></tr>`;
   renderFirstLastPage();
+}
+
+function punchCell(time, result) {
+  return `${esc(time)}<br>${resultPill(result)}`;
 }
 
 function firstLastQuery(page=attendanceOverviewMeta.page) {
@@ -696,13 +700,13 @@ function renderFirstLastPage() {
   body.innerHTML = rows.length ? rows.map(r => `<tr>
     <td>${esc(r.date)}</td>
     <td>${esc(r.employee)}</td>
-    <td>${esc(r.first_time)}</td>
-    <td>${resultPill(r.first_result)}</td>
-    <td>${esc(r.last_time)}</td>
-    <td>${resultPill(r.last_result)}</td>
+    <td>${punchCell(r.first_time, r.first_result)}</td>
+    <td>${punchCell(r.second_time, r.second_result)}</td>
+    <td>${punchCell(r.second_last_time, r.second_last_result)}</td>
+    <td>${punchCell(r.last_time, r.last_result)}</td>
     <td>${esc(r.punch_count)}</td>
     <td>${esc((r.source_nodes || []).join(", "))}<br><span class="subtle">${esc((r.devices || []).join(", "))}</span></td>
-  </tr>`).join("") : `<tr><td colspan="8" class="subtle">No first/last punch rows match the current filters</td></tr>`;
+  </tr>`).join("") : `<tr><td colspan="8" class="subtle">No boundary punch rows match the current filters</td></tr>`;
   const totalPages = Math.max(1, Math.ceil((attendanceOverviewMeta.total || 0) / (attendanceOverviewMeta.page_size || 100)));
   $("firstLastPageInfo").textContent = `${attendanceOverviewMeta.total || 0} row(s) · page ${attendanceOverviewMeta.page || 1} of ${totalPages}`;
   $("firstLastPrev").disabled = !attendanceOverviewMeta.has_prev;
@@ -755,8 +759,9 @@ async function exportAttendanceCsv() {
     return;
   }
   const header = [
-    "Date", "Employee", "First Punch Time", "First Result", "Last Punch Time",
-    "Last Result", "Total Punches", "Nodes", "Devices"
+    "Date", "Employee", "First IN", "First Result", "Second Punch", "Second Result",
+    "Second Last Punch", "Second Last Result", "Last OUT", "Last Result",
+    "Total Punches", "Nodes", "Devices"
   ];
   const lines = [header.map(csvCell).join(",")];
   for (const row of rows) {
@@ -765,6 +770,10 @@ async function exportAttendanceCsv() {
       row.employee,
       row.first_time,
       row.first_result,
+      row.second_time,
+      row.second_result,
+      row.second_last_time,
+      row.second_last_result,
       row.last_time,
       row.last_result,
       row.punch_count,
@@ -777,12 +786,12 @@ async function exportAttendanceCsv() {
   const link = document.createElement("a");
   const stamp = new Date().toISOString().slice(0, 10);
   link.href = url;
-  link.download = `first-last-punches-${stamp}.csv`;
+  link.download = `boundary-punches-${stamp}.csv`;
   document.body.appendChild(link);
   link.click();
   link.remove();
   URL.revokeObjectURL(url);
-  toast(`Exported ${rows.length} first/last row(s).`);
+  toast(`Exported ${rows.length} boundary row(s).`);
 }
 
 function resultPill(result) {

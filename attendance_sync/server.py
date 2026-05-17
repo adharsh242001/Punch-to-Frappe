@@ -28,6 +28,7 @@ from config import settings
 from config.env_file import read_env, update_env
 from hrms.frappe_client import FrappeClient
 from processors.event_processor import EventProcessor
+from processors.punch_selection import select_daily_punches
 from storage.factory import create_event_store
 from transport.security import (
     NODE_HEADER,
@@ -379,24 +380,15 @@ def process_pending_events(store: Any, processor: EventProcessor) -> dict[str, A
 
             selected_ids: set[int] = set()
             for (_employee_id, _event_date), items in grouped.items():
-                items.sort(key=lambda item: item["prepared"]["event_dt"])
-                first = items[0]
-                last = items[-1]
-                selected_ids.add(first["row"]["id"])
-                first_result = processor.push_prepared_event(first["prepared"], log_type="IN")
-                store.mark_inbound_processed(first["row"]["id"], f"first_punch_in_{first_result}")
-                results[f"first_punch_in_{first_result}"] = (
-                    results.get(f"first_punch_in_{first_result}", 0) + 1
-                )
-                processed += 1
-
-                if last["row"]["id"] != first["row"]["id"]:
-                    selected_ids.add(last["row"]["id"])
-                    last_result = processor.push_prepared_event(last["prepared"], log_type="OUT")
-                    store.mark_inbound_processed(last["row"]["id"], f"last_punch_out_{last_result}")
-                    results[f"last_punch_out_{last_result}"] = (
-                        results.get(f"last_punch_out_{last_result}", 0) + 1
-                    )
+                selected = select_daily_punches(items, lambda item: item["prepared"])
+                for item, log_type, label in selected:
+                    row = item["row"]
+                    prepared = item["prepared"]
+                    selected_ids.add(row["id"])
+                    result = processor.push_prepared_event(prepared, log_type=log_type)
+                    result_key = f"{label}_{result}"
+                    store.mark_inbound_processed(row["id"], result_key)
+                    results[result_key] = results.get(result_key, 0) + 1
                     processed += 1
 
             for item in ready_rows:

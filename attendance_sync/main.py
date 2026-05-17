@@ -26,6 +26,7 @@ from config import settings
 from devices.hikvision_client import HikvisionClient
 from hrms.frappe_client import FrappeClient
 from processors.event_processor import EventProcessor
+from processors.punch_selection import select_daily_punches
 from storage.factory import create_event_store
 
 # ── logging setup ─────────────────────────────────────────────────────────────
@@ -88,7 +89,7 @@ def process_first_last_events(
     events: list[dict[str, Any]],
     processor: EventProcessor,
 ) -> dict[str, int]:
-    """Push only the first and last prepared punch for each employee/date."""
+    """Push selected boundary punches for each employee/date."""
     ready_events: list[dict[str, Any]] = []
     results: dict[str, int] = {}
 
@@ -109,18 +110,11 @@ def process_first_last_events(
 
     pushed_serials: set[str] = set()
     for punches in grouped.values():
-        punches.sort(key=lambda item: item["event_dt"])
-
-        first_punch = punches[0]
-        first_result = processor.push_prepared_event(first_punch, "IN")
-        pushed_serials.add(str(first_punch["serial_no"]))
-        count(f"first_punch_in_{first_result}")
-
-        last_punch = punches[-1]
-        if str(last_punch["serial_no"]) != str(first_punch["serial_no"]):
-            last_result = processor.push_prepared_event(last_punch, "OUT")
-            pushed_serials.add(str(last_punch["serial_no"]))
-            count(f"last_punch_out_{last_result}")
+        selected = select_daily_punches(punches, lambda item: item)
+        for punch, log_type, label in selected:
+            result = processor.push_prepared_event(punch, log_type)
+            pushed_serials.add(str(punch["serial_no"]))
+            count(f"{label}_{result}")
 
     for prepared in ready_events:
         if str(prepared["serial_no"]) in pushed_serials:
@@ -186,7 +180,7 @@ def run_manual_sync(start_time: datetime, end_time: datetime) -> None:
 
         results = process_first_last_events(all_events, processor)
         logger.info(
-            "Manual range prepared %d raw event(s); first/last push results: %s",
+            "Manual range prepared %d raw event(s); boundary push results: %s",
             len(all_events),
             results,
         )
@@ -209,7 +203,7 @@ def main() -> None:
 
     logger.info(
         "Devices: %s | Poll interval: %ds | Dedup window: %ds | "
-        "Frappe push: first punch IN and last punch OUT per employee/day",
+        "Frappe push: first two and last two punches per employee/day when available",
         ", ".join(settings.DEVICE_IPS),
         settings.POLL_INTERVAL,
         settings.DEDUP_WINDOW,
@@ -248,7 +242,7 @@ def main() -> None:
         results = process_first_last_events(all_events, processor)
         if all_events or results:
             logger.info(
-                "Cycle prepared %d raw event(s); first/last push results: %s",
+                "Cycle prepared %d raw event(s); boundary push results: %s",
                 len(all_events),
                 results,
             )
