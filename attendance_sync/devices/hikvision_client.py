@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 # How many records to request per page from the device
 _PAGE_SIZE = 50
+_MAX_AUTH_RETRIES = 1
 
 
 class HikvisionClient:
@@ -54,10 +55,10 @@ class HikvisionClient:
 
         protocol = "https" if settings.HIKVISION_USE_HTTPS else "http"
         self._base_url = f"{protocol}://{device_ip}"
+        self._username = username
+        self._password = password
         self._auth = HTTPDigestAuth(username, password)
-        self._session = requests.Session()
-        self._session.auth = self._auth
-        self._session.verify = settings.HIKVISION_VERIFY_SSL
+        self._session = self._new_session()
         
         # Suppress insecure request warnings if SSL verification is disabled
         if not settings.HIKVISION_VERIFY_SSL:
@@ -96,12 +97,10 @@ class HikvisionClient:
 
             try:
                 # Add ?format=json to the URL as seen in the working curl
-                resp = self._session.post(
+                resp = self._post_with_auth_retry(
                     f"{self._base_url}/ISAPI/AccessControl/AcsEvent?format=json",
-                    json=payload,
-                    timeout=self.timeout,
+                    payload,
                 )
-                resp.raise_for_status()
             except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as exc:
                 # If HTTPS failed, try falling back to HTTP (or vice versa)
                 alt_protocol = "http" if self._base_url.startswith("https") else "https"
@@ -115,12 +114,10 @@ class HikvisionClient:
                 )
                 
                 try:
-                    resp = self._session.post(
+                    resp = self._post_with_auth_retry(
                         f"{alt_url}/ISAPI/AccessControl/AcsEvent?format=json",
-                        json=payload,
-                        timeout=self.timeout,
+                        payload,
                     )
-                    resp.raise_for_status()
                     # Success on fallback! Update base_url for future polls this session
                     self._base_url = alt_url
                 except Exception as fallback_exc:
@@ -128,10 +125,10 @@ class HikvisionClient:
                     return
             except requests.exceptions.HTTPError as exc:
                 logger.error(
-                    "[%s] HTTP error %s: %s",
+                    "[%s] HTTP error %s from device. Check device credentials/session. Response: %s",
                     self.device_ip,
                     exc.response.status_code,
-                    exc.response.text[:200],
+                    " ".join(exc.response.text.split())[:240],
                 )
                 return
 
@@ -155,6 +152,37 @@ class HikvisionClient:
                 break
 
     # ── helpers ───────────────────────────────────────────────────────────────
+
+    def _new_session(self) -> requests.Session:
+        session = requests.Session()
+        session.auth = HTTPDigestAuth(self._username, self._password)
+        session.verify = settings.HIKVISION_VERIFY_SSL
+        return session
+
+    def _reset_session(self) -> None:
+        self._session.close()
+        self._session = self._new_session()
+
+    def _post_with_auth_retry(self, url: str, payload: dict[str, Any]) -> requests.Response:
+        last_response: requests.Response | None = None
+        for attempt in range(_MAX_AUTH_RETRIES + 1):
+            resp = self._session.post(url, json=payload, timeout=self.timeout)
+            last_response = resp
+            if resp.status_code != 401:
+                resp.raise_for_status()
+                return resp
+
+            logger.warning(
+                "[%s] Device returned 401 unauthorized%s.",
+                self.device_ip,
+                "; refreshing digest session and retrying" if attempt < _MAX_AUTH_RETRIES else "",
+            )
+            if attempt < _MAX_AUTH_RETRIES:
+                self._reset_session()
+
+        assert last_response is not None
+        last_response.raise_for_status()
+        return last_response
 
     @staticmethod
     def _fmt_time(dt: datetime) -> str:
