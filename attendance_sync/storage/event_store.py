@@ -14,6 +14,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from processors.punch_selection import select_daily_boundary_events
+
 
 class EventStore:
     """Thread-safe SQLite store for attendance events."""
@@ -427,24 +429,29 @@ class EventStore:
                 {
                     "time": event_time,
                     "result": row["last_result"] or row["status"],
+                    "serialNo": payload.get("serialNo"),
                 }
             )
 
-            if item["first_time"] is None or event_time < item["first_time"]:
-                item["first_time"] = event_time
-                item["first_result"] = row["last_result"] or row["status"]
-            if item["last_time"] is None or event_time > item["last_time"]:
-                item["last_time"] = event_time
-                item["last_result"] = row["last_result"] or row["status"]
-
         overview = []
         for item in grouped.values():
-            events = sorted(item.pop("_events"), key=lambda event: event["time"])
-            if len(events) >= 4:
-                item["second_time"] = events[1]["time"]
-                item["second_result"] = events[1]["result"]
-                item["second_last_time"] = events[-2]["time"]
-                item["second_last_result"] = events[-2]["result"]
+            boundaries = select_daily_boundary_events(item.pop("_events"))
+            first = boundaries["first"]
+            second = boundaries["second"]
+            second_last = boundaries["second_last"]
+            last = boundaries["last"]
+            if first:
+                item["first_time"] = first["time"]
+                item["first_result"] = first["result"]
+            if second:
+                item["second_time"] = second["time"]
+                item["second_result"] = second["result"]
+            if second_last:
+                item["second_last_time"] = second_last["time"]
+                item["second_last_result"] = second_last["result"]
+            if last:
+                item["last_time"] = last["time"]
+                item["last_result"] = last["result"]
             item["source_nodes"] = sorted(item["source_nodes"])
             item["devices"] = sorted(item["devices"])
             overview.append(item)

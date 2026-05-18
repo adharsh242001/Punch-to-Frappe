@@ -1,8 +1,27 @@
 """Rules for choosing which daily punches are pushed to Frappe."""
 from collections.abc import Callable
+from datetime import datetime
 from typing import Any, TypeVar
 
 T = TypeVar("T")
+
+
+def _sort_value(value: Any) -> tuple[int, float | str]:
+    if isinstance(value, datetime):
+        return (0, value.timestamp())
+    if isinstance(value, str):
+        try:
+            return (0, datetime.fromisoformat(value).timestamp())
+        except ValueError:
+            return (1, value)
+    return (1, str(value))
+
+
+def punch_sort_key(prepared: dict[str, Any]) -> tuple[tuple[int, float | str], str]:
+    """Return a deterministic sort key for one prepared/raw punch."""
+    value = prepared.get("event_dt") or prepared.get("time") or prepared.get("raw_time") or ""
+    serial_no = str(prepared.get("serial_no") or prepared.get("serialNo") or "")
+    return (_sort_value(value), serial_no)
 
 
 def select_daily_punches(
@@ -24,7 +43,7 @@ def select_daily_punches(
     if not items:
         return []
 
-    ordered = sorted(items, key=lambda item: prepared_for(item)["event_dt"])
+    ordered = sorted(items, key=lambda item: punch_sort_key(prepared_for(item)))
     if len(ordered) == 1:
         return [(ordered[0], "IN", "first_punch_in")]
 
@@ -50,3 +69,25 @@ def select_daily_punches(
         selected.append((item, log_type, label))
         seen_serials.add(serial_no)
     return selected
+
+
+def select_daily_boundary_events(events: list[dict[str, Any]]) -> dict[str, dict[str, Any] | None]:
+    """Return display boundary events using the same ordering as push selection."""
+    empty = {
+        "first": None,
+        "second": None,
+        "second_last": None,
+        "last": None,
+    }
+    if not events:
+        return empty
+
+    ordered = sorted(events, key=punch_sort_key)
+    boundaries = dict(empty)
+    boundaries["first"] = ordered[0]
+    if len(ordered) >= 4:
+        boundaries["second"] = ordered[1]
+        boundaries["second_last"] = ordered[-2]
+    if len(ordered) > 1:
+        boundaries["last"] = ordered[-1]
+    return boundaries
