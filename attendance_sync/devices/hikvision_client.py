@@ -169,18 +169,17 @@ class HikvisionClient:
             resp = self._session.post(url, json=payload, timeout=self.timeout)
             last_response = resp
             if resp.status_code != 401:
+                if attempt:
+                    logger.debug("[%s] Digest auth retry succeeded.", self.device_ip)
                 resp.raise_for_status()
                 return resp
 
-            logger.warning(
-                "[%s] Device returned 401 unauthorized%s.",
-                self.device_ip,
-                "; refreshing digest session and retrying" if attempt < _MAX_AUTH_RETRIES else "",
-            )
             if attempt < _MAX_AUTH_RETRIES:
+                logger.debug("[%s] Refreshing digest auth session after 401.", self.device_ip)
                 self._reset_session()
 
         assert last_response is not None
+        logger.warning("[%s] Device still returned 401 after digest auth retry.", self.device_ip)
         last_response.raise_for_status()
         return last_response
 
