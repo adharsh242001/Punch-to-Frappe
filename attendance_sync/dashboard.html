@@ -203,6 +203,7 @@
     <nav>
       <button class="tab active" data-tab="overview" onclick="showTab('overview')">Overview</button>
       <button class="tab" data-tab="first-last" onclick="showTab('first-last')">First / Last Punches</button>
+      <button class="tab" data-tab="hr-verify" onclick="showTab('hr-verify')">HR Verify</button>
       <button class="tab" data-tab="punch-records" onclick="showTab('punch-records')">All Punch Records</button>
       <button class="tab" data-tab="alerts" onclick="showTab('alerts')">Alerts <span id="alertTabCount"></span></button>
       <button class="tab" data-tab="events" onclick="showTab('events')">Inbound Events</button>
@@ -326,6 +327,40 @@
           <thead><tr><th>Level</th><th>Issue</th><th>Employee</th><th>Device</th><th>Event Time</th><th>Detail</th><th>Action</th></tr></thead>
           <tbody id="alertsBody"></tbody>
         </table>
+      </div>
+    </div>
+  </section>
+
+  <section id="panel-hr-verify" class="hidden">
+    <div class="card">
+      <div class="topbar" style="margin-bottom:12px">
+        <div>
+          <h2>HR Verification</h2>
+          <div id="hrVerifySummary" class="subtle">Map punch records with Frappe employee names and late-coming details for HR review.</div>
+        </div>
+        <div class="actions">
+          <input id="hrVerifyFilter" placeholder="Search name, HRMS ID, department, employee no" oninput="scheduleHrVerifyReload()" style="width:330px" />
+          <input id="hrVerifyFrom" type="date" onchange="resetHrVerifyPageAndLoad()" style="width:150px" />
+          <input id="hrVerifyTo" type="date" onchange="resetHrVerifyPageAndLoad()" style="width:150px" />
+          <input id="hrLateAfter" value="09:30" oninput="this.dataset.touched='1'" onchange="resetHrVerifyPageAndLoad()" style="width:90px" />
+          <select id="hrVerifyPageSize" onchange="resetHrVerifyPageAndLoad()" style="width:110px"><option>50</option><option selected>100</option><option>250</option><option>500</option><option>1000</option></select>
+          <button class="secondary" onclick="clearHrVerifyFilters()">Clear</button>
+          <button class="secondary" onclick="refreshHrFrappeDetails()">Refresh Frappe</button>
+          <button class="secondary" onclick="exportHrVerifyCsv()">Export CSV</button>
+        </div>
+      </div>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>Date</th><th>Device Emp No</th><th>HRMS ID</th><th>Name / Details</th><th>Late</th><th>First IN</th><th>Last OUT</th><th>Punches</th><th>Devices</th></tr></thead>
+          <tbody id="hrVerifyBody"></tbody>
+        </table>
+      </div>
+      <div class="topbar" style="margin-top:12px">
+        <div id="hrVerifyPageInfo" class="subtle">Page not loaded</div>
+        <div class="actions">
+          <button id="hrVerifyPrev" class="secondary" onclick="changeHrVerifyPage(-1)">Previous</button>
+          <button id="hrVerifyNext" class="secondary" onclick="changeHrVerifyPage(1)">Next</button>
+        </div>
       </div>
     </div>
   </section>
@@ -461,6 +496,7 @@
         <div class="field"><label>API Key <span id="hint-HRMS_API_KEY" class="subtle"></span></label><input id="cfg-HRMS_API_KEY" type="password" placeholder="leave blank to keep current" /></div>
         <div class="field"><label>API Secret <span id="hint-HRMS_API_SECRET" class="subtle"></span></label><input id="cfg-HRMS_API_SECRET" type="password" placeholder="leave blank to keep current" /></div>
         <div class="field"><label>Legacy Default Log Type</label><input id="cfg-DEFAULT_LOG_TYPE" /></div>
+        <div class="field"><label>Late After Time</label><input id="cfg-LATE_AFTER_TIME" placeholder="09:30" /></div>
       </div>
       <div class="card">
         <h2>Server</h2>
@@ -515,11 +551,16 @@ let firstLastReloadTimer = null;
 let punchRecordsRows = [];
 let punchRecordsMeta = { page: 1, page_size: 100, total: 0, has_next: false, has_prev: false };
 let punchRecordsReloadTimer = null;
+let hrVerifyRows = [];
+let hrVerifyMeta = { page: 1, page_size: 100, total: 0, has_next: false, has_prev: false };
+let hrVerifySummary = {};
+let hrVerifyReloadTimer = null;
+let serverLateAfter = "09:30";
 
 const cfgKeys = [
   "HRMS_URL", "HRMS_API_KEY", "HRMS_API_SECRET", "POLL_INTERVAL", "DEDUP_WINDOW",
   "LOG_LEVEL", "SERVER_HOST", "SERVER_PORT", "STORAGE_BACKEND", "POSTGRES_DSN",
-  "DEFAULT_LOG_TYPE"
+  "DEFAULT_LOG_TYPE", "LATE_AFTER_TIME"
 ];
 
 function $(id) { return document.getElementById(id); }
@@ -549,10 +590,11 @@ async function api(path, options) {
 
 function showTab(name) {
   document.querySelectorAll(".tab").forEach(t => t.classList.toggle("active", t.dataset.tab === name));
-  ["overview", "first-last", "punch-records", "alerts", "events", "processed", "retries", "manual", "employee-map", "config"].forEach(p => {
+  ["overview", "first-last", "hr-verify", "punch-records", "alerts", "events", "processed", "retries", "manual", "employee-map", "config"].forEach(p => {
     $("panel-" + p).classList.toggle("hidden", p !== name);
   });
   if (name === "first-last") renderFirstLastPage();
+  if (name === "hr-verify") loadHrVerification().catch(err => toast("HR verification load failed: " + err.message, true));
   if (name === "punch-records") loadPunchRecords().catch(err => toast("Punch records load failed: " + err.message, true));
   if (name === "employee-map" && employeeMapEntries.length === 0) loadEmployeeMap();
   if (name === "config" && !configCache) loadConfig();
@@ -611,6 +653,10 @@ function alertPill(severity) {
 
 function renderStatus(s) {
   $("serverLine").textContent = `${s.server.host}:${s.server.port} · ${s.server.storage_backend} · ${s.server.hrms_url || "Frappe URL not set"} · manual Frappe push`;
+  serverLateAfter = s.server.late_after_time || "09:30";
+  if ($("hrLateAfter") && !$("hrLateAfter").dataset.touched) {
+    $("hrLateAfter").value = serverLateAfter;
+  }
   $("pendingStat").textContent = s.counts.pending;
   $("doneStat").textContent = s.counts.done;
   $("processedStat").textContent = s.counts.processed_total;
@@ -770,7 +816,7 @@ function renderAttendanceOverview(rows) {
     <td>${punchCell(r.last_time, r.last_result)}</td>
     <td>${esc(r.punch_count)}</td>
     <td>${esc((r.source_nodes || []).join(", "))}<br><span class="subtle">${esc((r.devices || []).join(", "))}</span></td>
-  </tr>`).join("") : `<tr><td colspan="8" class="subtle">No attendance overview yet</td></tr>`;
+  </tr>`).join("") : `<tr><td colspan="6" class="subtle">No attendance overview yet</td></tr>`;
   renderFirstLastPage();
 }
 
@@ -843,6 +889,109 @@ function changeFirstLastPage(delta) {
   loadAttendanceOverview(nextPage).catch(err => toast("First/last page load failed: " + err.message, true));
 }
 
+function hrVerifyQuery(page=hrVerifyMeta.page, refreshFrappe=false) {
+  const params = new URLSearchParams();
+  params.set("page", String(page));
+  params.set("page_size", $("hrVerifyPageSize")?.value || String(hrVerifyMeta.page_size || 100));
+  const search = ($("hrVerifyFilter")?.value || "").trim();
+  const from = $("hrVerifyFrom")?.value || "";
+  const to = $("hrVerifyTo")?.value || "";
+  const lateAfter = ($("hrLateAfter")?.value || "09:30").trim();
+  if (search) params.set("search", search);
+  if (from) params.set("from", from);
+  if (to) params.set("to", to);
+  if (lateAfter) params.set("late_after", lateAfter);
+  if (refreshFrappe) params.set("refresh_frappe", "1");
+  return params;
+}
+
+async function loadHrVerification(page=hrVerifyMeta.page, refreshFrappe=false) {
+  const data = await api("/api/hr-verification?" + hrVerifyQuery(page, refreshFrappe).toString());
+  hrVerifyRows = data.rows || [];
+  hrVerifySummary = data.summary || {};
+  hrVerifyMeta = {
+    page: data.page || page,
+    page_size: data.page_size || Number($("hrVerifyPageSize")?.value || 100),
+    total: data.total || 0,
+    has_next: Boolean(data.has_next),
+    has_prev: Boolean(data.has_prev)
+  };
+  renderHrVerification();
+}
+
+function renderHrVerification() {
+  const body = $("hrVerifyBody");
+  if (!body) return;
+  body.innerHTML = hrVerifyRows.length ? hrVerifyRows.map(r => `<tr>
+    <td>${esc(r.date)}</td>
+    <td>${esc(r.device_employee_no)}</td>
+    <td>${esc(r.frappe_employee_id)}<br>${mappingPill(r.mapping_status, r.frappe_details_status)}</td>
+    <td>${esc(r.employee_name)}<br><span class="subtle">${esc([r.department, r.designation, r.branch, r.default_shift].filter(Boolean).join(" · "))}</span></td>
+    <td>${latePill(r.late_status, r.late_by_minutes)}<br><span class="subtle">after ${esc(r.late_after)}</span></td>
+    <td>${punchCell(r.first_time, r.first_result)}</td>
+    <td>${punchCell(r.last_time, r.last_result)}</td>
+    <td>${esc(r.punch_count)}</td>
+    <td>${esc((r.source_nodes || []).join(", "))}<br><span class="subtle">${esc((r.devices || []).join(", "))}</span></td>
+  </tr>`).join("") : `<tr><td colspan="9" class="subtle">No HR verification rows match the current filters</td></tr>`;
+
+  const totalPages = Math.max(1, Math.ceil((hrVerifyMeta.total || 0) / (hrVerifyMeta.page_size || 100)));
+  $("hrVerifyPageInfo").textContent = `${hrVerifyMeta.total || 0} row(s) · page ${hrVerifyMeta.page || 1} of ${totalPages}`;
+  $("hrVerifyPrev").disabled = !hrVerifyMeta.has_prev;
+  $("hrVerifyNext").disabled = !hrVerifyMeta.has_next;
+
+  const parts = [
+    `${hrVerifySummary.total || 0} employee-day row(s)`,
+    `${hrVerifySummary.late || 0} late`,
+    `${hrVerifySummary.on_time || 0} on time`,
+    `${hrVerifySummary.missing_map || 0} missing map`,
+    `late after ${hrVerifySummary.late_after || $("hrLateAfter")?.value || "09:30"}`
+  ];
+  if (hrVerifySummary.frappe_error) parts.push(`Frappe details warning: ${hrVerifySummary.frappe_error}`);
+  $("hrVerifySummary").textContent = parts.join(" · ");
+}
+
+function mappingPill(mappingStatus, detailsStatus) {
+  if (mappingStatus === "missing_map") return `<span class="pill bad">missing map</span>`;
+  if (detailsStatus === "loaded") return `<span class="pill good">Frappe loaded</span>`;
+  return `<span class="pill warn">Frappe not found</span>`;
+}
+
+function latePill(status, minutes) {
+  if (status === "late") return `<span class="pill bad">late ${esc(minutes)} min</span>`;
+  if (status === "on_time") return `<span class="pill good">on time</span>`;
+  return `<span class="pill warn">no first punch</span>`;
+}
+
+function resetHrVerifyPageAndLoad() {
+  hrVerifyMeta.page = 1;
+  loadHrVerification(1).catch(err => toast("HR verification load failed: " + err.message, true));
+}
+
+function scheduleHrVerifyReload() {
+  clearTimeout(hrVerifyReloadTimer);
+  hrVerifyReloadTimer = setTimeout(resetHrVerifyPageAndLoad, 300);
+}
+
+function changeHrVerifyPage(delta) {
+  const nextPage = Math.max(1, (hrVerifyMeta.page || 1) + delta);
+  loadHrVerification(nextPage).catch(err => toast("HR verification load failed: " + err.message, true));
+}
+
+function refreshHrFrappeDetails() {
+  loadHrVerification(hrVerifyMeta.page || 1, true)
+    .then(() => toast("Frappe employee details refreshed."))
+    .catch(err => toast("Frappe refresh failed: " + err.message, true));
+}
+
+function clearHrVerifyFilters() {
+  $("hrVerifyFilter").value = "";
+  $("hrVerifyFrom").value = "";
+  $("hrVerifyTo").value = "";
+  $("hrLateAfter").dataset.touched = "";
+  $("hrLateAfter").value = serverLateAfter;
+  resetHrVerifyPageAndLoad();
+}
+
 function csvCell(value) {
   const textValue = Array.isArray(value) ? value.join(", ") : text(value);
   return `"${String(textValue).replace(/"/g, '""')}"`;
@@ -895,6 +1044,71 @@ async function exportAttendanceCsv() {
   link.remove();
   URL.revokeObjectURL(url);
   toast(`Exported ${rows.length} first/last row(s).`);
+}
+
+async function exportHrVerifyCsv() {
+  const rows = [];
+  try {
+    let page = 1;
+    let hasNext = true;
+    const pageSize = Number($("hrVerifyPageSize")?.value || 1000);
+    while (hasNext) {
+      const params = hrVerifyQuery(page);
+      params.set("page_size", String(Math.max(pageSize, 1000)));
+      const data = await api("/api/hr-verification?" + params.toString());
+      rows.push(...(data.rows || []));
+      hasNext = Boolean(data.has_next);
+      page += 1;
+    }
+  } catch (err) {
+    toast("HR verification CSV export failed: " + err.message, true);
+    return;
+  }
+  const header = [
+    "Date", "Device Employee No", "Frappe HRMS ID", "Employee Name", "Department",
+    "Designation", "Branch", "Company", "Status", "Default Shift", "Late After",
+    "Late Status", "Late By Minutes", "First IN", "First Result", "Last OUT",
+    "Last Result", "Total Punches", "Nodes", "Devices", "Mapping Status",
+    "Frappe Details Status"
+  ];
+  const lines = [header.map(csvCell).join(",")];
+  for (const row of rows) {
+    lines.push([
+      row.date,
+      row.device_employee_no,
+      row.frappe_employee_id,
+      row.employee_name,
+      row.department,
+      row.designation,
+      row.branch,
+      row.company,
+      row.employee_status,
+      row.default_shift,
+      row.late_after,
+      row.late_status,
+      row.late_by_minutes,
+      row.first_time,
+      row.first_result,
+      row.last_time,
+      row.last_result,
+      row.punch_count,
+      row.source_nodes || [],
+      row.devices || [],
+      row.mapping_status,
+      row.frappe_details_status
+    ].map(csvCell).join(","));
+  }
+  const blob = new Blob([lines.join("\r\n") + "\r\n"], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  const stamp = new Date().toISOString().slice(0, 10);
+  link.href = url;
+  link.download = `hr-verification-${stamp}.csv`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+  toast(`Exported ${rows.length} HR verification row(s).`);
 }
 
 async function exportPunchRecordsCsv() {

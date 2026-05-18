@@ -96,6 +96,7 @@ HRMS_API_SECRET: str = os.getenv("HRMS_API_SECRET", "")
 
 # ── Default Check-in Metadata ────────────────────────────────────────────────
 DEFAULT_LOG_TYPE: str = os.getenv("DEFAULT_LOG_TYPE", "IN")
+LATE_AFTER_TIME: str = os.getenv("LATE_AFTER_TIME", "09:30")
 
 
 def _optional_float(name: str, minimum: float, maximum: float) -> float | None:

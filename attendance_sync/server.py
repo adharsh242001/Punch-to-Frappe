@@ -76,7 +76,12 @@ _EDITABLE_KEYS = (
     "STORAGE_BACKEND",
     "POSTGRES_DSN",
     "DEFAULT_LOG_TYPE",
+    "LATE_AFTER_TIME",
 )
+
+_employee_details_lock = threading.Lock()
+_employee_details_cache: dict[str, dict[str, Any]] = {}
+_employee_details_cache_expires_at = 0.0
 
 
 def _int_query(params: dict[str, list[str]], key: str, default: int, minimum: int, maximum: int) -> int:
@@ -351,6 +356,162 @@ def _filter_attendance_overview(
     return filtered
 
 
+def _time_to_minutes(value: str) -> int | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        if "T" in raw:
+            parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            return parsed.hour * 60 + parsed.minute
+        time_part = raw.split(" ", 1)[-1]
+        hour, minute, *_ = time_part.split(":")
+        return int(hour) * 60 + int(minute)
+    except (TypeError, ValueError):
+        return None
+
+
+def _late_threshold_minutes(value: str) -> tuple[str, int]:
+    raw = str(value or settings.LATE_AFTER_TIME or "09:30").strip()
+    try:
+        hour, minute, *_ = raw.split(":")
+        threshold = int(hour) * 60 + int(minute)
+        if not 0 <= threshold < 24 * 60:
+            raise ValueError
+        return f"{int(hour):02d}:{int(minute):02d}", threshold
+    except (TypeError, ValueError):
+        return "09:30", 9 * 60 + 30
+
+
+def _employee_display_name(details: dict[str, Any]) -> str:
+    if details.get("employee_name"):
+        return str(details["employee_name"])
+    parts = [details.get("first_name"), details.get("middle_name"), details.get("last_name")]
+    return " ".join(str(part).strip() for part in parts if str(part or "").strip())
+
+
+def _load_frappe_employee_details(
+    frappe: FrappeClient,
+    employee_ids: list[str],
+    refresh: bool = False,
+) -> tuple[dict[str, dict[str, Any]], str | None]:
+    global _employee_details_cache_expires_at
+    now = time.time()
+    unique_ids = sorted({employee_id for employee_id in employee_ids if employee_id})
+    with _employee_details_lock:
+        missing = [
+            employee_id for employee_id in unique_ids
+            if refresh or now >= _employee_details_cache_expires_at or employee_id not in _employee_details_cache
+        ]
+
+    error = None
+    if missing:
+        try:
+            fetched = frappe.get_employees(missing)
+            with _employee_details_lock:
+                _employee_details_cache.update(fetched)
+                for employee_id in missing:
+                    _employee_details_cache.setdefault(employee_id, {})
+                _employee_details_cache_expires_at = now + 300
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Could not load Frappe employee details: %s", exc)
+            error = str(exc)
+
+    with _employee_details_lock:
+        return {employee_id: dict(_employee_details_cache.get(employee_id, {})) for employee_id in unique_ids}, error
+
+
+def _hr_verification_rows(
+    store: Any,
+    frappe: FrappeClient,
+    search: str,
+    date_from: str,
+    date_to: str,
+    late_after: str,
+    refresh_frappe: bool,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    employee_map = settings.load_employee_map()
+    overview = _filter_attendance_overview(
+        store.attendance_overview(limit=None),
+        "",
+        date_from,
+        date_to,
+    )
+    mapped_ids = [employee_map.get(str(row.get("employee") or "").strip(), "") for row in overview]
+    details_by_id, frappe_error = _load_frappe_employee_details(frappe, mapped_ids, refresh=refresh_frappe)
+    late_label, late_minutes = _late_threshold_minutes(late_after)
+
+    rows: list[dict[str, Any]] = []
+    for row in overview:
+        device_employee_no = str(row.get("employee") or "").strip()
+        frappe_employee_id = employee_map.get(device_employee_no, "")
+        details = details_by_id.get(frappe_employee_id, {})
+        first_minutes = _time_to_minutes(str(row.get("first_time") or ""))
+        late_by = None
+        late_status = "missing_first_punch"
+        if first_minutes is not None:
+            late_by = max(0, first_minutes - late_minutes)
+            late_status = "late" if late_by > 0 else "on_time"
+
+        enriched = {
+            "date": row.get("date"),
+            "device_employee_no": device_employee_no,
+            "frappe_employee_id": frappe_employee_id,
+            "employee_name": _employee_display_name(details),
+            "department": details.get("department") or "",
+            "designation": details.get("designation") or "",
+            "branch": details.get("branch") or "",
+            "company": details.get("company") or "",
+            "employee_status": details.get("status") or "",
+            "default_shift": details.get("default_shift") or "",
+            "first_time": row.get("first_time"),
+            "first_result": row.get("first_result"),
+            "last_time": row.get("last_time"),
+            "last_result": row.get("last_result"),
+            "punch_count": row.get("punch_count"),
+            "source_nodes": row.get("source_nodes") or [],
+            "devices": row.get("devices") or [],
+            "late_after": late_label,
+            "late_by_minutes": late_by,
+            "late_status": late_status,
+            "mapping_status": "mapped" if frappe_employee_id else "missing_map",
+            "frappe_details_status": "loaded" if details else ("not_found" if frappe_employee_id else "not_mapped"),
+        }
+        rows.append(enriched)
+
+    search_text = search.lower()
+    if search_text:
+        rows = [
+            row for row in rows
+            if search_text in " ".join(
+                str(part)
+                for part in [
+                    row.get("date"),
+                    row.get("device_employee_no"),
+                    row.get("frappe_employee_id"),
+                    row.get("employee_name"),
+                    row.get("department"),
+                    row.get("designation"),
+                    row.get("branch"),
+                    row.get("employee_status"),
+                    row.get("late_status"),
+                    *(row.get("source_nodes") or []),
+                    *(row.get("devices") or []),
+                ]
+            ).lower()
+        ]
+
+    summary = {
+        "late_after": late_label,
+        "total": len(rows),
+        "late": sum(1 for row in rows if row["late_status"] == "late"),
+        "on_time": sum(1 for row in rows if row["late_status"] == "on_time"),
+        "missing_map": sum(1 for row in rows if row["mapping_status"] == "missing_map"),
+        "frappe_error": frappe_error,
+    }
+    return rows, summary
+
+
 def process_pending_events(store: Any, processor: EventProcessor) -> dict[str, Any]:
     """Drain queued inbound events and run retry queue. Thread-safe."""
     with _push_lock:
@@ -511,6 +672,40 @@ class EventIngestHandler(BaseHTTPRequestHandler):
                 200,
                 {
                     "overview": filtered_rows[start:end],
+                    "page": page,
+                    "page_size": page_size,
+                    "total": total,
+                    "has_next": end < total,
+                    "has_prev": page > 1,
+                },
+            )
+            return
+        if path == "/api/hr-verification":
+            page = _int_query(query, "page", 1, 1, 100000)
+            page_size = _int_query(query, "page_size", 100, 10, 1000)
+            search = (query.get("search") or [""])[0].strip()
+            date_from = (query.get("from") or [""])[0].strip()
+            date_to = (query.get("to") or [""])[0].strip()
+            late_after = (query.get("late_after") or [settings.LATE_AFTER_TIME])[0].strip()
+            refresh_frappe = (query.get("refresh_frappe") or [""])[0].lower() in {"1", "true", "yes"}
+            all_rows, summary = _hr_verification_rows(
+                self.store,
+                self.frappe,
+                search=search,
+                date_from=date_from,
+                date_to=date_to,
+                late_after=late_after,
+                refresh_frappe=refresh_frappe,
+            )
+            total = len(all_rows)
+            start = (page - 1) * page_size
+            end = start + page_size
+            _json_response(
+                self,
+                200,
+                {
+                    "rows": all_rows[start:end],
+                    "summary": summary,
                     "page": page,
                     "page_size": page_size,
                     "total": total,
@@ -711,6 +906,7 @@ class EventIngestHandler(BaseHTTPRequestHandler):
                 "poll_interval": settings.POLL_INTERVAL,
                 "storage_backend": settings.STORAGE_BACKEND,
                 "hrms_url": settings.HRMS_URL,
+                "late_after_time": settings.LATE_AFTER_TIME,
             },
             "counts": {
                 "pending": counts.get("pending", 0),
@@ -736,9 +932,10 @@ class QuietThreadingHTTPServer(ThreadingHTTPServer):
         super().handle_error(request, client_address)
 
 
-def create_server(store: Any, processor: EventProcessor) -> ThreadingHTTPServer:
+def create_server(store: Any, processor: EventProcessor, frappe: FrappeClient) -> ThreadingHTTPServer:
     EventIngestHandler.store = store
     EventIngestHandler.processor = processor
+    EventIngestHandler.frappe = frappe
     return QuietThreadingHTTPServer((settings.SERVER_HOST, settings.SERVER_PORT), EventIngestHandler)
 
 
@@ -776,7 +973,7 @@ def main() -> None:
 
     store = create_event_store()
     frappe, processor = create_processor(store)
-    server = create_server(store, processor)
+    server = create_server(store, processor, frappe)
     server_thread = threading.Thread(target=server.serve_forever, daemon=True)
     server_thread.start()
 

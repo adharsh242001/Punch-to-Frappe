@@ -135,6 +135,7 @@ All runtime settings are read from `.env`.
 | `RETRY_MAX_ATTEMPTS` | `5` | Maximum retry attempts for transient Frappe/API errors. |
 | `RETRY_BACKOFF_BASE` | `2.0` | Exponential retry delay base. |
 | `DEFAULT_LOG_TYPE` | `IN` | Default log type for one-event direct processing. Distributed server push derives `IN` for the first punch and `OUT` for the last punch. |
+| `LATE_AFTER_TIME` | `09:30` | HR verification late-coming threshold, using the local punch time. |
 | `LATITUDE` | empty | Optional decimal latitude added to checkin records, for example `11.2545456`. |
 | `LONGITUDE` | empty | Optional decimal longitude added to checkin records, for example `75.8369735`. |
 | `LOG_LEVEL` | `INFO` | Logging level: `DEBUG`, `INFO`, `WARNING`, or `ERROR`. |
@@ -325,6 +326,7 @@ Open `http://central-server-ip:8090/` in a browser. The dashboard shows:
 - Alert count and **Alerts** tab for punches that were not pushed, missing employee mappings, retry items, bad timestamps, and other issues needing resolution
 - Per-edge-node connection status (online / stale / offline / never connected) based on the last `/events` POST received
 - A paginated **First / Last Punches** page grouped by employee and date, with filters and CSV export for the full filtered result set
+- A paginated **HR Verify** page that maps device employee numbers to Frappe employee names/details and shows late-coming status for HR review
 - A paginated **All Punch Records** page for inspecting every raw punch received from edge PCs
 - Recent inbound events, recently pushed checkins, and the retry queue
 - A **Manual Push to Frappe** button that drains the queue and runs retries. In distributed server mode, Frappe push is manual; the server does not auto-push every 600 seconds.

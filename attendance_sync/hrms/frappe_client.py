@@ -5,6 +5,7 @@ Pushes Employee Checkin records via the Frappe REST API.
 Uses token-based authentication (API_KEY:API_SECRET).
 """
 import logging
+import json
 from typing import Any
 
 import requests
@@ -27,6 +28,7 @@ class FrappeClient:
     """
 
     _ENDPOINT = "/api/resource/Employee Checkin"
+    _EMPLOYEE_ENDPOINT = "/api/resource/Employee"
 
     def __init__(
         self,
@@ -48,6 +50,61 @@ class FrappeClient:
         )
 
     # ── public interface ──────────────────────────────────────────────────────
+
+    def get_employees(self, employee_ids: list[str]) -> dict[str, dict[str, Any]]:
+        """Return Frappe Employee details keyed by employee document name."""
+        unique_ids = sorted({str(employee_id).strip() for employee_id in employee_ids if str(employee_id).strip()})
+        if not unique_ids:
+            return {}
+
+        fields = [
+            "name",
+            "employee_name",
+            "first_name",
+            "middle_name",
+            "last_name",
+            "department",
+            "designation",
+            "company",
+            "branch",
+            "status",
+            "default_shift",
+        ]
+        employees: dict[str, dict[str, Any]] = {}
+        for index in range(0, len(unique_ids), 100):
+            batch = unique_ids[index:index + 100]
+            params = {
+                "fields": json.dumps(fields),
+                "filters": json.dumps([["Employee", "name", "in", batch]]),
+                "limit_page_length": len(batch),
+            }
+            try:
+                resp = self._session.get(
+                    f"{self._base_url}{self._EMPLOYEE_ENDPOINT}",
+                    params=params,
+                    timeout=self._timeout,
+                )
+                resp.raise_for_status()
+            except requests.exceptions.HTTPError as exc:
+                status = exc.response.status_code
+                body = exc.response.text[:500]
+                raise FrappeAPIError(
+                    f"HTTP {status} from Frappe: {body}", status_code=status, body=body
+                ) from exc
+            except requests.exceptions.ConnectionError as exc:
+                raise FrappeAPIError(f"Connection error: {exc}") from exc
+            except requests.exceptions.Timeout as exc:
+                raise FrappeAPIError("Request timed out") from exc
+
+            try:
+                data = resp.json().get("data") or []
+            except ValueError:
+                data = []
+            for row in data:
+                name = str(row.get("name") or "").strip()
+                if name:
+                    employees[name] = row
+        return employees
 
     def push_checkin(
         self,
