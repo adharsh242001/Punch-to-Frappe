@@ -203,6 +203,7 @@
     <nav>
       <button class="tab active" data-tab="overview" onclick="showTab('overview')">Overview</button>
       <button class="tab" data-tab="first-last" onclick="showTab('first-last')">Boundary Punches</button>
+      <button class="tab" data-tab="punch-records" onclick="showTab('punch-records')">All Punch Records</button>
       <button class="tab" data-tab="alerts" onclick="showTab('alerts')">Alerts <span id="alertTabCount"></span></button>
       <button class="tab" data-tab="events" onclick="showTab('events')">Inbound Events</button>
       <button class="tab" data-tab="processed" onclick="showTab('processed')">Pushed</button>
@@ -325,6 +326,39 @@
           <thead><tr><th>Level</th><th>Issue</th><th>Employee</th><th>Device</th><th>Event Time</th><th>Detail</th><th>Action</th></tr></thead>
           <tbody id="alertsBody"></tbody>
         </table>
+      </div>
+    </div>
+  </section>
+
+  <section id="panel-punch-records" class="hidden">
+    <div class="card">
+      <div class="topbar" style="margin-bottom:12px">
+        <div>
+          <h2>All Punch Records</h2>
+          <div class="subtle">Every raw punch received from edge PCs, including records skipped by boundary selection.</div>
+        </div>
+        <div class="actions">
+          <input id="punchRecordsFilter" placeholder="Search employee, name, serial, device, node, result" oninput="schedulePunchRecordsReload()" style="width:320px" />
+          <input id="punchRecordsFrom" type="date" onchange="resetPunchRecordsPageAndLoad()" style="width:150px" />
+          <input id="punchRecordsTo" type="date" onchange="resetPunchRecordsPageAndLoad()" style="width:150px" />
+          <select id="punchRecordsStatus" onchange="resetPunchRecordsPageAndLoad()" style="width:120px"><option value="">all</option><option value="pending">pending</option><option value="done">done</option></select>
+          <select id="punchRecordsPageSize" onchange="resetPunchRecordsPageAndLoad()" style="width:110px"><option>50</option><option selected>100</option><option>250</option><option>500</option><option>1000</option></select>
+          <button class="secondary" onclick="clearPunchRecordsFilters()">Clear</button>
+          <button class="secondary" onclick="exportPunchRecordsCsv()">Export CSV</button>
+        </div>
+      </div>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>ID</th><th>Status</th><th>Node</th><th>Employee</th><th>Name</th><th>Device</th><th>Serial</th><th>Punch Time</th><th>Received</th><th>Result</th></tr></thead>
+          <tbody id="punchRecordsBody"></tbody>
+        </table>
+      </div>
+      <div class="topbar" style="margin-top:12px">
+        <div id="punchRecordsPageInfo" class="subtle">Page not loaded</div>
+        <div class="actions">
+          <button id="punchRecordsPrev" class="secondary" onclick="changePunchRecordsPage(-1)">Previous</button>
+          <button id="punchRecordsNext" class="secondary" onclick="changePunchRecordsPage(1)">Next</button>
+        </div>
       </div>
     </div>
   </section>
@@ -478,6 +512,9 @@ let employeeMapEntries = [];
 let attendanceOverviewRows = [];
 let attendanceOverviewMeta = { page: 1, page_size: 100, total: 0, has_next: false, has_prev: false };
 let firstLastReloadTimer = null;
+let punchRecordsRows = [];
+let punchRecordsMeta = { page: 1, page_size: 100, total: 0, has_next: false, has_prev: false };
+let punchRecordsReloadTimer = null;
 
 const cfgKeys = [
   "HRMS_URL", "HRMS_API_KEY", "HRMS_API_SECRET", "POLL_INTERVAL", "DEDUP_WINDOW",
@@ -512,10 +549,11 @@ async function api(path, options) {
 
 function showTab(name) {
   document.querySelectorAll(".tab").forEach(t => t.classList.toggle("active", t.dataset.tab === name));
-  ["overview", "first-last", "alerts", "events", "processed", "retries", "manual", "employee-map", "config"].forEach(p => {
+  ["overview", "first-last", "punch-records", "alerts", "events", "processed", "retries", "manual", "employee-map", "config"].forEach(p => {
     $("panel-" + p).classList.toggle("hidden", p !== name);
   });
   if (name === "first-last") renderFirstLastPage();
+  if (name === "punch-records") loadPunchRecords().catch(err => toast("Punch records load failed: " + err.message, true));
   if (name === "employee-map" && employeeMapEntries.length === 0) loadEmployeeMap();
   if (name === "config" && !configCache) loadConfig();
   if (name === "manual") buildManualCommand();
@@ -628,6 +666,79 @@ function renderEvents(rows) {
     <td>${esc(r.event_time)}</td><td>${fmtTime(r.received_at)}</td><td>${esc(r.last_result)}</td>
   </tr>`).join("") : `<tr><td colspan="8" class="subtle">No inbound events</td></tr>`;
 }
+
+function punchRecordsQuery(page=punchRecordsMeta.page) {
+  const params = new URLSearchParams();
+  params.set("page", String(page));
+  params.set("page_size", $("punchRecordsPageSize")?.value || String(punchRecordsMeta.page_size || 100));
+  const search = ($("punchRecordsFilter")?.value || "").trim();
+  const from = $("punchRecordsFrom")?.value || "";
+  const to = $("punchRecordsTo")?.value || "";
+  const status = $("punchRecordsStatus")?.value || "";
+  if (search) params.set("search", search);
+  if (from) params.set("from", from);
+  if (to) params.set("to", to);
+  if (status) params.set("status", status);
+  return params;
+}
+
+async function loadPunchRecords(page=punchRecordsMeta.page) {
+  const data = await api("/api/punch-records?" + punchRecordsQuery(page).toString());
+  punchRecordsRows = data.records || [];
+  punchRecordsMeta = {
+    page: data.page || page,
+    page_size: data.page_size || Number($("punchRecordsPageSize")?.value || 100),
+    total: data.total || 0,
+    has_next: Boolean(data.has_next),
+    has_prev: Boolean(data.has_prev)
+  };
+  renderPunchRecords();
+}
+
+function renderPunchRecords() {
+  const body = $("punchRecordsBody");
+  if (!body) return;
+  body.innerHTML = punchRecordsRows.length ? punchRecordsRows.map(r => `<tr>
+    <td>${esc(r.id)}</td>
+    <td>${inboundStatusPill(r)}</td>
+    <td class="mono">${esc(r.source_node)}</td>
+    <td>${esc(r.employee)}</td>
+    <td>${esc(r.name)}</td>
+    <td class="mono">${esc(r.device_ip)}</td>
+    <td class="mono">${esc(r.serial_no)}</td>
+    <td>${esc(r.event_time)}</td>
+    <td>${fmtTime(r.received_at)}</td>
+    <td>${esc(r.last_result)}</td>
+  </tr>`).join("") : `<tr><td colspan="10" class="subtle">No punch records match the current filters</td></tr>`;
+  const totalPages = Math.max(1, Math.ceil((punchRecordsMeta.total || 0) / (punchRecordsMeta.page_size || 100)));
+  $("punchRecordsPageInfo").textContent = `${punchRecordsMeta.total || 0} punch record(s) · page ${punchRecordsMeta.page || 1} of ${totalPages}`;
+  $("punchRecordsPrev").disabled = !punchRecordsMeta.has_prev;
+  $("punchRecordsNext").disabled = !punchRecordsMeta.has_next;
+}
+
+function resetPunchRecordsPageAndLoad() {
+  punchRecordsMeta.page = 1;
+  loadPunchRecords(1).catch(err => toast("Punch records load failed: " + err.message, true));
+}
+
+function schedulePunchRecordsReload() {
+  clearTimeout(punchRecordsReloadTimer);
+  punchRecordsReloadTimer = setTimeout(resetPunchRecordsPageAndLoad, 300);
+}
+
+function changePunchRecordsPage(delta) {
+  const nextPage = Math.max(1, (punchRecordsMeta.page || 1) + delta);
+  loadPunchRecords(nextPage).catch(err => toast("Punch records load failed: " + err.message, true));
+}
+
+function clearPunchRecordsFilters() {
+  $("punchRecordsFilter").value = "";
+  $("punchRecordsFrom").value = "";
+  $("punchRecordsTo").value = "";
+  $("punchRecordsStatus").value = "";
+  resetPunchRecordsPageAndLoad();
+}
+
 function inboundStatusPill(r) {
   const result = text(r.last_result);
   if (result.includes("error") || result.includes("missing") || result.includes("bad")) {
@@ -792,6 +903,57 @@ async function exportAttendanceCsv() {
   link.remove();
   URL.revokeObjectURL(url);
   toast(`Exported ${rows.length} boundary row(s).`);
+}
+
+async function exportPunchRecordsCsv() {
+  const rows = [];
+  try {
+    let page = 1;
+    let hasNext = true;
+    const pageSize = Number($("punchRecordsPageSize")?.value || 1000);
+    while (hasNext) {
+      const params = punchRecordsQuery(page);
+      params.set("page_size", String(Math.max(pageSize, 1000)));
+      const data = await api("/api/punch-records?" + params.toString());
+      rows.push(...(data.records || []));
+      hasNext = Boolean(data.has_next);
+      page += 1;
+    }
+  } catch (err) {
+    toast("Punch records CSV export failed: " + err.message, true);
+    return;
+  }
+  const header = [
+    "ID", "Status", "Node", "Employee", "Name", "Device", "Serial",
+    "Punch Time", "Received", "Processed", "Result"
+  ];
+  const lines = [header.map(csvCell).join(",")];
+  for (const row of rows) {
+    lines.push([
+      row.id,
+      row.status,
+      row.source_node,
+      row.employee,
+      row.name,
+      row.device_ip,
+      row.serial_no,
+      row.event_time,
+      row.received_at,
+      row.processed_at,
+      row.last_result
+    ].map(csvCell).join(","));
+  }
+  const blob = new Blob([lines.join("\r\n") + "\r\n"], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  const stamp = new Date().toISOString().slice(0, 10);
+  link.href = url;
+  link.download = `all-punch-records-${stamp}.csv`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+  toast(`Exported ${rows.length} punch record(s).`);
 }
 
 function resultPill(result) {

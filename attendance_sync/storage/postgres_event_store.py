@@ -341,6 +341,66 @@ class PostgresEventStore:
             )
         return out
 
+    def punch_records(
+        self,
+        page: int = 1,
+        page_size: int = 100,
+        search: str = "",
+        date_from: str = "",
+        date_to: str = "",
+        status: str = "",
+    ) -> dict[str, Any]:
+        rows = self._conn().execute(
+            """
+            SELECT id, source_node, payload, status, received_at, processed_at, last_result
+            FROM inbound_events
+            ORDER BY id DESC
+            """
+        ).fetchall()
+        search_text = search.lower()
+        filtered: list[dict[str, Any]] = []
+        for row in rows:
+            payload = row["payload"] if isinstance(row["payload"], dict) else json.loads(row["payload"])
+            event_time = str(payload.get("time") or "").strip()
+            event_date = event_time.split("T", 1)[0].split(" ", 1)[0] if event_time else ""
+            if date_from and event_date < date_from:
+                continue
+            if date_to and event_date > date_to:
+                continue
+            if status and row["status"] != status:
+                continue
+
+            record = {
+                "id": row["id"],
+                "source_node": row["source_node"],
+                "status": row["status"],
+                "received_at": row["received_at"],
+                "processed_at": row["processed_at"],
+                "last_result": row["last_result"],
+                "employee": payload.get("employeeNoString") or payload.get("employeeNo"),
+                "name": payload.get("name"),
+                "device_ip": payload.get("deviceIP"),
+                "event_time": event_time,
+                "serial_no": payload.get("serialNo"),
+            }
+            if search_text:
+                haystack = " ".join(str(value or "") for value in record.values()).lower()
+                if search_text not in haystack:
+                    continue
+            filtered.append(record)
+
+        total = len(filtered)
+        start = (page - 1) * page_size
+        end = start + page_size
+        return {
+            "records": filtered[start:end],
+            "page": page,
+            "page_size": page_size,
+            "total": total,
+            "has_next": end < total,
+            "has_prev": page > 1,
+        }
+
     def recent_processed(self, limit: int = 50) -> list[dict[str, Any]]:
         rows = self._conn().execute(
             """

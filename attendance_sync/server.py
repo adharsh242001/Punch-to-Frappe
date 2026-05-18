@@ -475,6 +475,26 @@ class EventIngestHandler(BaseHTTPRequestHandler):
         if path == "/api/events":
             _json_response(self, 200, {"events": self.store.recent_inbound(100)})
             return
+        if path == "/api/punch-records":
+            page = _int_query(query, "page", 1, 1, 100000)
+            page_size = _int_query(query, "page_size", 100, 10, 1000)
+            search = (query.get("search") or [""])[0].strip()
+            date_from = (query.get("from") or [""])[0].strip()
+            date_to = (query.get("to") or [""])[0].strip()
+            status = (query.get("status") or [""])[0].strip()
+            _json_response(
+                self,
+                200,
+                self.store.punch_records(
+                    page=page,
+                    page_size=page_size,
+                    search=search,
+                    date_from=date_from,
+                    date_to=date_to,
+                    status=status,
+                ),
+            )
+            return
         if path == "/api/attendance-overview":
             page = _int_query(query, "page", 1, 1, 100000)
             page_size = _int_query(query, "page_size", 100, 10, 1000)

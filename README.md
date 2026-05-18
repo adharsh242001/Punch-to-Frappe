@@ -325,6 +325,7 @@ Open `http://central-server-ip:8090/` in a browser. The dashboard shows:
 - Alert count and **Alerts** tab for punches that were not pushed, missing employee mappings, retry items, bad timestamps, and other issues needing resolution
 - Per-edge-node connection status (online / stale / offline / never connected) based on the last `/events` POST received
 - A paginated **Boundary Punches** page grouped by employee and date, with filters and CSV export for the full filtered result set
+- A paginated **All Punch Records** page for inspecting every raw punch received from edge PCs
 - Recent inbound events, recently pushed checkins, and the retry queue
 - A **Manual Push to Frappe** button that drains the queue and runs retries. In distributed server mode, Frappe push is manual; the server does not auto-push every 600 seconds.
 - Every pushed `Employee Checkin` sets `skip_auto_attendance` to `0`.
