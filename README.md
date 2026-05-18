@@ -129,7 +129,7 @@ All runtime settings are read from `.env`.
 | `FIRST_RUN_LOOKBACK_HOURS` | `24` | On service startup, fetch this many previous hours. |
 | `DEDUP_WINDOW` | `30` | Ignore another punch from the same mapped employee within this many seconds. |
 | `EVENT_MAJOR` | `5` | Hikvision event major filter. |
-| `EVENT_MINOR` | `75` | Hikvision event minor filter. |
+| `EVENT_MINORS` | `75,38` | Comma-separated Hikvision event minor filters. Default fetches face authentication (`75`) and fingerprint authentication (`38`). |
 | `EMPLOYEE_MAP` | `employee_map.json` | Path to the employee mapping JSON file. |
 | `STORE_PATH` | `data/events.db` | SQLite database for processed events, last punch times, and retries. |
 | `RETRY_MAX_ATTEMPTS` | `5` | Maximum retry attempts for transient Frappe/API errors. |
