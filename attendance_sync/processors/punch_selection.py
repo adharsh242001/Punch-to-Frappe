@@ -33,12 +33,10 @@ def select_daily_punches(
 
     Rules:
     - 1 punch: first punch as IN.
-    - 2 or 3 punches: first punch as IN, last punch as OUT.
-    - 4+ punches: first as IN, second without log type, second-last without
-      log type, and last as OUT.
+    - 2+ punches: first punch as IN, last punch as OUT.
 
-    The device only supplies punch times; only the outer boundary punches get
-    derived IN/OUT direction.
+    The device only supplies punch times; IN/OUT is derived from the first and
+    last punch positions.
     """
     if not items:
         return []
@@ -47,18 +45,10 @@ def select_daily_punches(
     if len(ordered) == 1:
         return [(ordered[0], "IN", "first_punch_in")]
 
-    if len(ordered) >= 4:
-        candidates = [
-            (ordered[0], "IN", "first_punch_in"),
-            (ordered[1], None, "second_punch"),
-            (ordered[-2], None, "second_last_punch"),
-            (ordered[-1], "OUT", "last_punch_out"),
-        ]
-    else:
-        candidates = [
-            (ordered[0], "IN", "first_punch_in"),
-            (ordered[-1], "OUT", "last_punch_out"),
-        ]
+    candidates = [
+        (ordered[0], "IN", "first_punch_in"),
+        (ordered[-1], "OUT", "last_punch_out"),
+    ]
 
     selected: list[tuple[T, str | None, str]] = []
     seen_serials: set[str] = set()
@@ -71,12 +61,10 @@ def select_daily_punches(
     return selected
 
 
-def select_daily_boundary_events(events: list[dict[str, Any]]) -> dict[str, dict[str, Any] | None]:
-    """Return display boundary events using the same ordering as push selection."""
+def select_daily_first_last_events(events: list[dict[str, Any]]) -> dict[str, dict[str, Any] | None]:
+    """Return display first/last events using the same ordering as push selection."""
     empty = {
         "first": None,
-        "second": None,
-        "second_last": None,
         "last": None,
     }
     if not events:
@@ -85,9 +73,6 @@ def select_daily_boundary_events(events: list[dict[str, Any]]) -> dict[str, dict
     ordered = sorted(events, key=punch_sort_key)
     boundaries = dict(empty)
     boundaries["first"] = ordered[0]
-    if len(ordered) >= 4:
-        boundaries["second"] = ordered[1]
-        boundaries["second_last"] = ordered[-2]
     if len(ordered) > 1:
         boundaries["last"] = ordered[-1]
     return boundaries

@@ -89,7 +89,7 @@ def process_first_last_events(
     events: list[dict[str, Any]],
     processor: EventProcessor,
 ) -> dict[str, int]:
-    """Push selected boundary punches for each employee/date."""
+    """Push only first and last prepared punches for each employee/date."""
     ready_events: list[dict[str, Any]] = []
     results: dict[str, int] = {}
 
@@ -180,7 +180,7 @@ def run_manual_sync(start_time: datetime, end_time: datetime) -> None:
 
         results = process_first_last_events(all_events, processor)
         logger.info(
-            "Manual range prepared %d raw event(s); boundary push results: %s",
+            "Manual range prepared %d raw event(s); first/last push results: %s",
             len(all_events),
             results,
         )
@@ -203,7 +203,7 @@ def main() -> None:
 
     logger.info(
         "Devices: %s | Poll interval: %ds | Dedup window: %ds | "
-        "Frappe push: first two and last two punches per employee/day when available",
+        "Frappe push: first punch IN and last punch OUT per employee/day",
         ", ".join(settings.DEVICE_IPS),
         settings.POLL_INTERVAL,
         settings.DEDUP_WINDOW,
@@ -242,7 +242,7 @@ def main() -> None:
         results = process_first_last_events(all_events, processor)
         if all_events or results:
             logger.info(
-                "Cycle prepared %d raw event(s); boundary push results: %s",
+                "Cycle prepared %d raw event(s); first/last push results: %s",
                 len(all_events),
                 results,
             )

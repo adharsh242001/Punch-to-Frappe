@@ -7,7 +7,7 @@ from typing import Any
 import psycopg
 from psycopg.rows import dict_row
 
-from processors.punch_selection import select_daily_boundary_events
+from processors.punch_selection import select_daily_first_last_events
 
 
 class PostgresEventStore:
@@ -463,10 +463,6 @@ class PostgresEventStore:
                     "punch_count": 0,
                     "first_time": None,
                     "first_result": None,
-                    "second_time": None,
-                    "second_result": None,
-                    "second_last_time": None,
-                    "second_last_result": None,
                     "last_time": None,
                     "last_result": None,
                     "_events": [],
@@ -487,20 +483,12 @@ class PostgresEventStore:
 
         overview = []
         for item in grouped.values():
-            boundaries = select_daily_boundary_events(item.pop("_events"))
+            boundaries = select_daily_first_last_events(item.pop("_events"))
             first = boundaries["first"]
-            second = boundaries["second"]
-            second_last = boundaries["second_last"]
             last = boundaries["last"]
             if first:
                 item["first_time"] = first["time"]
                 item["first_result"] = first["result"]
-            if second:
-                item["second_time"] = second["time"]
-                item["second_result"] = second["result"]
-            if second_last:
-                item["second_last_time"] = second_last["time"]
-                item["second_last_result"] = second_last["result"]
             if last:
                 item["last_time"] = last["time"]
                 item["last_result"] = last["result"]
