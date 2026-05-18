@@ -349,7 +349,7 @@
       </div>
       <div class="table-scroll">
         <table>
-          <thead><tr><th>ID</th><th>Status</th><th>Node</th><th>Employee</th><th>Name</th><th>Device</th><th>Serial</th><th>Punch Time</th><th>Received</th><th>Result</th></tr></thead>
+          <thead><tr><th>ID</th><th>Status</th><th>Node</th><th>Employee</th><th>Name</th><th>Device</th><th>Type</th><th>Serial</th><th>Punch Time</th><th>Received</th><th>Result</th></tr></thead>
           <tbody id="punchRecordsBody"></tbody>
         </table>
       </div>
@@ -705,11 +705,12 @@ function renderPunchRecords() {
     <td>${esc(r.employee)}</td>
     <td>${esc(r.name)}</td>
     <td class="mono">${esc(r.device_ip)}</td>
+    <td>${esc(r.event_type || r.minor)}</td>
     <td class="mono">${esc(r.serial_no)}</td>
     <td>${esc(r.event_time)}</td>
     <td>${fmtTime(r.received_at)}</td>
     <td>${esc(r.last_result)}</td>
-  </tr>`).join("") : `<tr><td colspan="10" class="subtle">No punch records match the current filters</td></tr>`;
+  </tr>`).join("") : `<tr><td colspan="11" class="subtle">No punch records match the current filters</td></tr>`;
   const totalPages = Math.max(1, Math.ceil((punchRecordsMeta.total || 0) / (punchRecordsMeta.page_size || 100)));
   $("punchRecordsPageInfo").textContent = `${punchRecordsMeta.total || 0} punch record(s) · page ${punchRecordsMeta.page || 1} of ${totalPages}`;
   $("punchRecordsPrev").disabled = !punchRecordsMeta.has_prev;
@@ -924,7 +925,7 @@ async function exportPunchRecordsCsv() {
     return;
   }
   const header = [
-    "ID", "Status", "Node", "Employee", "Name", "Device", "Serial",
+    "ID", "Status", "Node", "Employee", "Name", "Device", "Type", "Minor", "Serial",
     "Punch Time", "Received", "Processed", "Result"
   ];
   const lines = [header.map(csvCell).join(",")];
@@ -936,6 +937,8 @@ async function exportPunchRecordsCsv() {
       row.employee,
       row.name,
       row.device_ip,
+      row.event_type,
+      row.minor,
       row.serial_no,
       row.event_time,
       row.received_at,

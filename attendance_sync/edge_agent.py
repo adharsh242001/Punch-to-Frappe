@@ -104,7 +104,7 @@ def fetch_device_events(start_time: datetime, end_time: datetime) -> list[dict[s
             username=device_config["user"],
             password=device_config["pass"],
             major=settings.EVENT_MAJOR,
-            minor=settings.EVENT_MINOR,
+            minor=settings.EVENT_MINORS,
         )
         try:
             for event in client.fetch_events(start_time, end_time):

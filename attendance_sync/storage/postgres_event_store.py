@@ -337,6 +337,8 @@ class PostgresEventStore:
                     "device_ip": payload.get("deviceIP"),
                     "event_time": payload.get("time"),
                     "serial_no": payload.get("serialNo"),
+                    "event_type": payload.get("eventType"),
+                    "minor": payload.get("minor"),
                 }
             )
         return out
@@ -382,6 +384,8 @@ class PostgresEventStore:
                 "device_ip": payload.get("deviceIP"),
                 "event_time": event_time,
                 "serial_no": payload.get("serialNo"),
+                "event_type": payload.get("eventType"),
+                "minor": payload.get("minor"),
             }
             if search_text:
                 haystack = " ".join(str(value or "") for value in record.values()).lower()

@@ -10,7 +10,7 @@ API reference:
 """
 import logging
 from datetime import datetime, timezone
-from typing import Any, Generator
+from typing import Any, Generator, Iterable
 
 import requests
 from requests.auth import HTTPDigestAuth
@@ -33,8 +33,9 @@ class HikvisionClient:
         IP address of the device (e.g. "10.10.10.131").
     username / password:
         Device credentials (HTTP Digest).
-    major / minor:
-        Event type filter (5 / 75 for face-recognition check-in).
+    major / minors:
+        Event type filters. By default this fetches face and fingerprint
+        authentication events.
     timeout:
         HTTP request timeout in seconds.
     """
@@ -45,12 +46,17 @@ class HikvisionClient:
         username: str,
         password: str,
         major: int = 5,
-        minor: int = 75,
+        minor: int | Iterable[int] | None = 75,
         timeout: int = 10,
     ) -> None:
         self.device_ip = device_ip
         self.major = major
-        self.minor = minor
+        if minor is None:
+            self.minors: list[int | None] = [None]
+        elif isinstance(minor, int):
+            self.minors = [minor]
+        else:
+            self.minors = list(dict.fromkeys(minor))
         self.timeout = timeout
 
         protocol = "https" if settings.HIKVISION_USE_HTTPS else "http"
@@ -78,6 +84,28 @@ class HikvisionClient:
         Each yielded dict contains the raw fields returned by the device plus
         an injected ``deviceIP`` key.
         """
+        seen: set[str] = set()
+        for minor in self.minors:
+            for event in self._fetch_events_for_minor(start_time, end_time, minor):
+                event_key = "|".join(
+                    [
+                        str(event.get("deviceIP", "")),
+                        str(event.get("serialNo", "")),
+                        str(event.get("time", "")),
+                        str(event.get("employeeNoString", "")),
+                    ]
+                )
+                if event_key in seen:
+                    continue
+                seen.add(event_key)
+                yield event
+
+    def _fetch_events_for_minor(
+        self,
+        start_time: datetime,
+        end_time: datetime,
+        minor: int | None,
+    ) -> Generator[dict[str, Any], None, None]:
         search_id = self._make_search_id()
         position = 0
 
@@ -89,11 +117,12 @@ class HikvisionClient:
                     "searchResultPosition": position,
                     "maxResults": _PAGE_SIZE,
                     "major": self.major,
-                    "minor": self.minor,
                     "startTime": self._fmt_time(start_time),
                     "endTime": self._fmt_time(end_time),
                 }
             }
+            if minor is not None:
+                payload["AcsEventCond"]["minor"] = minor
 
             try:
                 # Add ?format=json to the URL as seen in the working curl
@@ -145,6 +174,8 @@ class HikvisionClient:
 
             for event in events:
                 event["deviceIP"] = self.device_ip
+                if minor is not None and not event.get("minor"):
+                    event["minor"] = minor
                 yield event
 
             position += len(events)
@@ -224,6 +255,10 @@ class HikvisionClient:
                 "name": item.get("name", ""),
                 "time": item.get("time", ""),
                 "serialNo": str(item.get("serialNo", "")),
+                "major": item.get("major", ""),
+                "minor": item.get("minor", ""),
+                "eventType": item.get("eventType") or item.get("eventTypeName") or item.get("eventDescription") or "",
+                "attendanceStatus": item.get("attendanceStatus", ""),
             }
             events.append(event)
 
@@ -261,6 +296,10 @@ class HikvisionClient:
                 "name": _text(item, "name"),
                 "time": _text(item, "time"),
                 "serialNo": _text(item, "serialNo"),
+                "major": _text(item, "major"),
+                "minor": _text(item, "minor"),
+                "eventType": _text(item, "eventType") or _text(item, "eventTypeName") or _text(item, "eventDescription"),
+                "attendanceStatus": _text(item, "attendanceStatus"),
             }
             events.append(event)
 

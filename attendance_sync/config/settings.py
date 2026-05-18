@@ -71,7 +71,23 @@ FIRST_RUN_LOOKBACK_HOURS: int = int(os.getenv("FIRST_RUN_LOOKBACK_HOURS", "24"))
 
 # ── Hikvision event filter ────────────────────────────────────────────────────
 EVENT_MAJOR: int = int(os.getenv("EVENT_MAJOR", "5"))
-EVENT_MINOR: int = int(os.getenv("EVENT_MINOR", "75"))
+
+
+def _parse_event_minors() -> list[int]:
+    raw = os.getenv("EVENT_MINORS")
+    if raw is None:
+        raw = os.getenv("EVENT_MINOR", "75,38")
+    minors: list[int] = []
+    for part in raw.split(","):
+        value = part.strip()
+        if not value:
+            continue
+        minors.append(int(value, 0))
+    return minors
+
+
+EVENT_MINORS: list[int] = _parse_event_minors()
+EVENT_MINOR: int = EVENT_MINORS[0] if EVENT_MINORS else 75
 
 # ── Frappe HRMS ───────────────────────────────────────────────────────────────
 HRMS_URL: str = os.getenv("HRMS_URL", "").rstrip("/")

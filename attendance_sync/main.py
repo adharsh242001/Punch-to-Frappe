@@ -71,7 +71,7 @@ def run_poll_cycle(
         username=device_config["user"],
         password=device_config["pass"],
         major=settings.EVENT_MAJOR,
-        minor=settings.EVENT_MINOR,
+        minor=settings.EVENT_MINORS,
     )
 
     events: list[dict[str, Any]] = []
