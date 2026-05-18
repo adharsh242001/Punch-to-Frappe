@@ -90,6 +90,26 @@ class PostgresEventStore:
             )
             conn.execute(
                 """
+                CREATE TABLE IF NOT EXISTS frappe_push_log (
+                    id             BIGSERIAL PRIMARY KEY,
+                    attempted_at   TEXT    NOT NULL,
+                    serial_no      TEXT    NOT NULL,
+                    employee_no    TEXT    NOT NULL,
+                    hrms_id        TEXT    NOT NULL,
+                    event_time     TEXT    NOT NULL,
+                    device_ip      TEXT    NOT NULL,
+                    device_id      TEXT    NOT NULL,
+                    log_type       TEXT,
+                    result         TEXT    NOT NULL,
+                    http_status    INTEGER,
+                    payload        JSONB   NOT NULL,
+                    response_body  TEXT,
+                    error          TEXT
+                )
+                """
+            )
+            conn.execute(
+                """
                 CREATE INDEX IF NOT EXISTS idx_inbound_events_pending
                 ON inbound_events (status, received_at, id)
                 """
@@ -98,6 +118,12 @@ class PostgresEventStore:
                 """
                 CREATE INDEX IF NOT EXISTS idx_retry_queue_due
                 ON retry_queue (next_retry, attempts)
+                """
+            )
+            conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_frappe_push_log_attempted
+                ON frappe_push_log (attempted_at DESC, id DESC)
                 """
             )
 
@@ -215,6 +241,48 @@ class PostgresEventStore:
                 (max_attempts,),
             )
         return cur.rowcount or 0
+
+    def record_frappe_push_attempt(
+        self,
+        *,
+        serial_no: str,
+        employee_no: str,
+        hrms_id: str,
+        event_time: str,
+        device_ip: str,
+        device_id: str,
+        log_type: str | None,
+        payload: dict[str, Any],
+        result: str,
+        http_status: int | None = None,
+        response_body: str = "",
+        error: str = "",
+    ) -> None:
+        with self._conn().transaction():
+            self._conn().execute(
+                """
+                INSERT INTO frappe_push_log
+                    (attempted_at, serial_no, employee_no, hrms_id, event_time,
+                     device_ip, device_id, log_type, result, http_status, payload,
+                     response_body, error)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s)
+                """,
+                (
+                    datetime.now(timezone.utc).isoformat(),
+                    serial_no,
+                    employee_no,
+                    hrms_id,
+                    event_time,
+                    device_ip,
+                    device_id,
+                    log_type,
+                    result,
+                    http_status,
+                    json.dumps(payload, separators=(",", ":"), sort_keys=True),
+                    response_body[:4000],
+                    error[:4000],
+                ),
+            )
 
     def enqueue_inbound_events(
         self,
@@ -416,6 +484,29 @@ class PostgresEventStore:
             (limit,),
         ).fetchall()
         return [dict(row) for row in rows]
+
+    def recent_frappe_push_logs(self, limit: int = 100) -> list[dict[str, Any]]:
+        rows = self._conn().execute(
+            """
+            SELECT id, attempted_at, serial_no, employee_no, hrms_id, event_time,
+                   device_ip, device_id, log_type, result, http_status, payload,
+                   response_body, error
+            FROM frappe_push_log
+            ORDER BY id DESC
+            LIMIT %s
+            """,
+            (limit,),
+        ).fetchall()
+        out = []
+        for row in rows:
+            item = dict(row)
+            if isinstance(item.get("payload"), str):
+                try:
+                    item["payload"] = json.loads(item["payload"])
+                except json.JSONDecodeError:
+                    pass
+            out.append(item)
+        return out
 
     def get_retry_queue(self, limit: int = 50) -> list[dict[str, Any]]:
         rows = self._conn().execute(

@@ -151,6 +151,16 @@
     min-height: 36px;
   }
   textarea { min-height: 112px; resize: vertical; }
+  pre {
+    margin: 8px 0 0;
+    max-height: 240px;
+    overflow: auto;
+    background: var(--surface-2);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 8px;
+    white-space: pre-wrap;
+  }
   .field { margin-bottom: 12px; }
   .inline-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
   .hidden { display: none; }
@@ -208,6 +218,7 @@
       <button class="tab" data-tab="alerts" onclick="showTab('alerts')">Alerts <span id="alertTabCount"></span></button>
       <button class="tab" data-tab="events" onclick="showTab('events')">Inbound Events</button>
       <button class="tab" data-tab="processed" onclick="showTab('processed')">Pushed</button>
+      <button class="tab" data-tab="push-logs" onclick="showTab('push-logs')">Frappe Logs</button>
       <button class="tab" data-tab="retries" onclick="showTab('retries')">Retries</button>
       <button class="tab" data-tab="manual" onclick="showTab('manual')">Manual Range</button>
       <button class="tab" data-tab="employee-map" onclick="showTab('employee-map')">Employee Map</button>
@@ -422,6 +433,24 @@
     </div>
   </section>
 
+  <section id="panel-push-logs" class="hidden">
+    <div class="card">
+      <div class="topbar" style="margin-bottom:12px">
+        <div>
+          <h2>Frappe Push Logs</h2>
+          <div class="subtle">Every attempted Employee Checkin push, including payload, result, Frappe response, and errors.</div>
+        </div>
+        <button class="secondary" onclick="loadFrappePushLogs()">Refresh Logs</button>
+      </div>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>Attempted</th><th>Result</th><th>Employee</th><th>Time</th><th>Device</th><th>Type</th><th>Serial</th><th>Payload / Response</th></tr></thead>
+          <tbody id="pushLogsBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
   <section id="panel-retries" class="hidden">
     <div class="card">
       <h2>Retry Queue</h2>
@@ -556,6 +585,7 @@ let hrVerifyMeta = { page: 1, page_size: 100, total: 0, has_next: false, has_pre
 let hrVerifySummary = {};
 let hrVerifyReloadTimer = null;
 let serverLateAfter = "09:30";
+let frappePushLogs = [];
 
 const cfgKeys = [
   "HRMS_URL", "HRMS_API_KEY", "HRMS_API_SECRET", "POLL_INTERVAL", "DEDUP_WINDOW",
@@ -590,12 +620,13 @@ async function api(path, options) {
 
 function showTab(name) {
   document.querySelectorAll(".tab").forEach(t => t.classList.toggle("active", t.dataset.tab === name));
-  ["overview", "first-last", "hr-verify", "punch-records", "alerts", "events", "processed", "retries", "manual", "employee-map", "config"].forEach(p => {
+  ["overview", "first-last", "hr-verify", "punch-records", "alerts", "events", "processed", "push-logs", "retries", "manual", "employee-map", "config"].forEach(p => {
     $("panel-" + p).classList.toggle("hidden", p !== name);
   });
   if (name === "first-last") renderFirstLastPage();
   if (name === "hr-verify") loadHrVerification().catch(err => toast("HR verification load failed: " + err.message, true));
   if (name === "punch-records") loadPunchRecords().catch(err => toast("Punch records load failed: " + err.message, true));
+  if (name === "push-logs") loadFrappePushLogs().catch(err => toast("Frappe logs load failed: " + err.message, true));
   if (name === "employee-map" && employeeMapEntries.length === 0) loadEmployeeMap();
   if (name === "config" && !configCache) loadConfig();
   if (name === "manual") buildManualCommand();
@@ -603,18 +634,20 @@ function showTab(name) {
 
 async function refreshAll() {
   try {
-    const [status, alerts, events, processed, retries] = await Promise.all([
+    const [status, alerts, events, processed, retries, pushLogs] = await Promise.all([
       api("/api/status"),
       api("/api/alerts"),
       api("/api/events"),
       api("/api/processed"),
-      api("/api/retries")
+      api("/api/retries"),
+      api("/api/frappe-push-logs")
     ]);
     renderStatus(status);
     renderAlerts(alerts.alerts || []);
     renderEvents(events.events || []);
     renderProcessed(processed.processed || []);
     renderRetries(retries.retries || []);
+    renderFrappePushLogs(pushLogs.logs || []);
     await loadAttendanceOverview();
     $("refreshLine").textContent = "Refreshed " + new Date().toLocaleTimeString();
   } catch (err) {
@@ -799,6 +832,32 @@ function renderProcessed(rows) {
     <td>${esc(r.event_time)}</td><td>${fmtTime(r.pushed_at)}</td>
   </tr>`).join("") : `<tr><td colspan="5" class="subtle">No processed records</td></tr>`;
 }
+
+async function loadFrappePushLogs() {
+  const data = await api("/api/frappe-push-logs?limit=200");
+  renderFrappePushLogs(data.logs || []);
+}
+
+function renderFrappePushLogs(rows) {
+  frappePushLogs = rows || [];
+  const body = $("pushLogsBody");
+  if (!body) return;
+  body.innerHTML = frappePushLogs.length ? frappePushLogs.map(r => {
+    const payload = typeof r.payload === "string" ? r.payload : JSON.stringify(r.payload || {}, null, 2);
+    const response = [r.response_body, r.error].filter(Boolean).join("\n");
+    return `<tr>
+      <td>${fmtTime(r.attempted_at)}</td>
+      <td>${resultPill(r.result)}${r.http_status ? `<br><span class="subtle">HTTP ${esc(r.http_status)}</span>` : ""}</td>
+      <td>${esc(r.employee_no)}<br><span class="subtle">HRMS ${esc(r.hrms_id)}</span></td>
+      <td>${esc(r.event_time)}</td>
+      <td class="mono">${esc(r.device_ip)}<br><span class="subtle">${esc(r.device_id)}</span></td>
+      <td>${esc(r.log_type)}</td>
+      <td class="mono">${esc(r.serial_no)}</td>
+      <td><details><summary>payload / response</summary><pre class="mono">${esc(payload)}${response ? "\n\n" + esc(response) : ""}</pre></details></td>
+    </tr>`;
+  }).join("") : `<tr><td colspan="8" class="subtle">No Frappe push attempts logged yet</td></tr>`;
+}
+
 function renderRetries(rows) {
   $("retriesBody").innerHTML = rows.length ? rows.map(r => `<tr>
     <td>${esc(r.id)}</td><td>${esc(r.employee_id)}</td><td>${esc(r.log_type)}</td><td class="mono">${esc(r.device_ip)}</td>

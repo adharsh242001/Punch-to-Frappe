@@ -84,6 +84,23 @@ class EventStore:
                 last_result    TEXT,
                 UNIQUE(source_node, source_event_id)
             );
+
+            CREATE TABLE IF NOT EXISTS frappe_push_log (
+                id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                attempted_at   TEXT    NOT NULL,
+                serial_no      TEXT    NOT NULL,
+                employee_no    TEXT    NOT NULL,
+                hrms_id        TEXT    NOT NULL,
+                event_time     TEXT    NOT NULL,
+                device_ip      TEXT    NOT NULL,
+                device_id      TEXT    NOT NULL,
+                log_type       TEXT,
+                result         TEXT    NOT NULL,
+                http_status    INTEGER,
+                payload        TEXT    NOT NULL,
+                response_body  TEXT,
+                error          TEXT
+            );
             """
         )
         columns = {
@@ -220,6 +237,48 @@ class EventStore:
         )
         self._conn().commit()
         return cur.rowcount
+
+    def record_frappe_push_attempt(
+        self,
+        *,
+        serial_no: str,
+        employee_no: str,
+        hrms_id: str,
+        event_time: str,
+        device_ip: str,
+        device_id: str,
+        log_type: str | None,
+        payload: dict[str, Any],
+        result: str,
+        http_status: int | None = None,
+        response_body: str = "",
+        error: str = "",
+    ) -> None:
+        self._conn().execute(
+            """
+            INSERT INTO frappe_push_log
+                (attempted_at, serial_no, employee_no, hrms_id, event_time,
+                 device_ip, device_id, log_type, result, http_status, payload,
+                 response_body, error)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                datetime.now(timezone.utc).isoformat(),
+                serial_no,
+                employee_no,
+                hrms_id,
+                event_time,
+                device_ip,
+                device_id,
+                log_type,
+                result,
+                http_status,
+                json.dumps(payload, separators=(",", ":"), sort_keys=True),
+                response_body[:4000],
+                error[:4000],
+            ),
+        )
+        self._conn().commit()
 
     # ── inbound edge queue ───────────────────────────────────────────────────
 
@@ -427,6 +486,28 @@ class EventStore:
             (limit,),
         )
         return [dict(row) for row in cur.fetchall()]
+
+    def recent_frappe_push_logs(self, limit: int = 100) -> list[dict[str, Any]]:
+        cur = self._conn().execute(
+            """
+            SELECT id, attempted_at, serial_no, employee_no, hrms_id, event_time,
+                   device_ip, device_id, log_type, result, http_status, payload,
+                   response_body, error
+            FROM frappe_push_log
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+        out = []
+        for row in cur.fetchall():
+            item = dict(row)
+            try:
+                item["payload"] = json.loads(item["payload"])
+            except Exception:
+                pass
+            out.append(item)
+        return out
 
     def get_retry_queue(self, limit: int = 50) -> list[dict[str, Any]]:
         cur = self._conn().execute(

@@ -723,6 +723,10 @@ class EventIngestHandler(BaseHTTPRequestHandler):
         if path == "/api/processed":
             _json_response(self, 200, {"processed": self.store.recent_processed(100)})
             return
+        if path == "/api/frappe-push-logs":
+            limit = _int_query(query, "limit", 100, 10, 500)
+            _json_response(self, 200, {"logs": self.store.recent_frappe_push_logs(limit)})
+            return
         if path == "/api/config":
             _json_response(self, 200, _load_config_view())
             return

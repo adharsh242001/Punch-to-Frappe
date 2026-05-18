@@ -141,19 +141,14 @@ class FrappeClient:
         FrappeAPIError
             If the API returns a non-2xx status.
         """
-        payload = {
-            "employee": employee,
-            "time": event_time,
-            "device_id": device_id,
-            "skip_auto_attendance": 0,
-        }
-        if log_type:
-            payload["log_type"] = log_type
-        if latitude:
-            payload["latitude"] = latitude
-        if longitude:
-            payload["longitude"] = longitude
-
+        payload = self.build_checkin_payload(
+            employee=employee,
+            event_time=event_time,
+            device_id=device_id,
+            log_type=log_type,
+            latitude=latitude,
+            longitude=longitude,
+        )
         try:
             resp = self._session.post(
                 f"{self._base_url}{self._ENDPOINT}",
@@ -176,6 +171,31 @@ class FrappeClient:
             return resp.json()
         except ValueError:
             return {"raw": resp.text}
+
+    def build_checkin_payload(
+        self,
+        *,
+        employee: str,
+        event_time: str,
+        device_id: str,
+        log_type: str | None = None,
+        latitude: str | float | None = None,
+        longitude: str | float | None = None,
+    ) -> dict[str, Any]:
+        """Build the exact Employee Checkin payload sent to Frappe."""
+        payload = {
+            "employee": employee,
+            "time": event_time,
+            "device_id": device_id,
+            "skip_auto_attendance": 0,
+        }
+        if log_type:
+            payload["log_type"] = log_type
+        if latitude:
+            payload["latitude"] = latitude
+        if longitude:
+            payload["longitude"] = longitude
+        return payload
 
     def close(self) -> None:
         self._session.close()

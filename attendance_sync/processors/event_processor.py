@@ -279,6 +279,14 @@ class EventProcessor:
     ) -> str:
         # Resolve friendly name if configured, otherwise use IP
         device_id = settings.DEVICE_NAMES.get(device_ip, device_ip)
+        payload = self._frappe.build_checkin_payload(
+            employee=hrms_id,
+            event_time=frappe_time,
+            device_id=device_id,
+            log_type=log_type,
+            latitude=latitude,
+            longitude=longitude,
+        )
 
         try:
             self._frappe.push_checkin(
@@ -289,12 +297,25 @@ class EventProcessor:
                 latitude=latitude,
                 longitude=longitude,
             )
+            self._record_push_log(
+                serial_no=serial_no,
+                employee_no=employee_no,
+                hrms_id=hrms_id,
+                frappe_time=frappe_time,
+                device_ip=device_ip,
+                device_id=device_id,
+                log_type=log_type,
+                payload=payload,
+                result="pushed",
+            )
             logger.info(
-                "Checkin pushed: employee=%s time=%s device=%s serial=%s",
+                "Checkin pushed: employee=%s time=%s device=%s serial=%s log_type=%s skip_auto_attendance=%s",
                 hrms_id,
                 frappe_time,
                 device_ip,
                 serial_no,
+                log_type or "",
+                payload.get("skip_auto_attendance"),
             )
             # Success: record as processed and update last-punch time
             self._store.mark_processed(serial_no, employee_no, device_ip, raw_time)
@@ -307,6 +328,20 @@ class EventProcessor:
 
         except FrappeAPIError as exc:
             if exc.is_duplicate:
+                self._record_push_log(
+                    serial_no=serial_no,
+                    employee_no=employee_no,
+                    hrms_id=hrms_id,
+                    frappe_time=frappe_time,
+                    device_ip=device_ip,
+                    device_id=device_id,
+                    log_type=log_type,
+                    payload=payload,
+                    result="frappe_duplicate",
+                    http_status=exc.status_code,
+                    response_body=exc.body,
+                    error=str(exc),
+                )
                 logger.info(
                     "Frappe reports duplicate for serial=%s – marking processed.",
                     serial_no,
@@ -317,6 +352,20 @@ class EventProcessor:
                 return "frappe_duplicate"
 
             if exc.is_client_error:
+                self._record_push_log(
+                    serial_no=serial_no,
+                    employee_no=employee_no,
+                    hrms_id=hrms_id,
+                    frappe_time=frappe_time,
+                    device_ip=device_ip,
+                    device_id=device_id,
+                    log_type=log_type,
+                    payload=payload,
+                    result="queued_client_error",
+                    http_status=exc.status_code,
+                    response_body=exc.body,
+                    error=str(exc),
+                )
                 logger.error(
                     "Frappe client error for serial=%s: %s – keeping in retry queue for review.",
                     serial_no,
@@ -337,6 +386,20 @@ class EventProcessor:
             next_attempt = attempt + 1
             delay = self._retry_base ** next_attempt
             next_retry = datetime.now(timezone.utc) + timedelta(seconds=delay)
+            self._record_push_log(
+                serial_no=serial_no,
+                employee_no=employee_no,
+                hrms_id=hrms_id,
+                frappe_time=frappe_time,
+                device_ip=device_ip,
+                device_id=device_id,
+                log_type=log_type,
+                payload=payload,
+                result="queued_retry",
+                http_status=exc.status_code,
+                response_body=exc.body,
+                error=str(exc),
+            )
             logger.warning(
                 "Push failed for serial=%s (attempt %d): %s – retrying in %.0fs",
                 serial_no,
@@ -354,3 +417,37 @@ class EventProcessor:
                 log_type=log_type,
             )
             return "queued_retry"
+
+    def _record_push_log(
+        self,
+        *,
+        serial_no: str,
+        employee_no: str,
+        hrms_id: str,
+        frappe_time: str,
+        device_ip: str,
+        device_id: str,
+        log_type: str | None,
+        payload: dict[str, Any],
+        result: str,
+        http_status: int | None = None,
+        response_body: str = "",
+        error: str = "",
+    ) -> None:
+        try:
+            self._store.record_frappe_push_attempt(
+                serial_no=serial_no,
+                employee_no=employee_no,
+                hrms_id=hrms_id,
+                event_time=frappe_time,
+                device_ip=device_ip,
+                device_id=device_id,
+                log_type=log_type,
+                payload=payload,
+                result=result,
+                http_status=http_status,
+                response_body=response_body,
+                error=error,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Could not write Frappe push audit log for serial=%s: %s", serial_no, exc)
