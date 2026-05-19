@@ -117,6 +117,68 @@ Response shape:
 }
 ```
 
+## Live Attendance
+
+### `GET /api/live-attendance`
+
+Live attendance log for the **Workforce pulse** widget: active headcount, punch-ins today, and a recent activity feed.
+
+Uses `FRAPPE_AUTO_PUSH_TIMEZONE` (when set) to determine the calendar day for "today". Otherwise UTC is used.
+
+Query params:
+
+| Param | Default | Notes |
+| --- | --- | --- |
+| `limit` | `50` | Feed items to return, min 1, max 200 (most recent first) |
+| `refresh_frappe` | false | Use `1` to refresh cached Frappe employee details |
+
+Response:
+
+```json
+{
+  "as_of": "2026-05-19T06:36:00+00:00",
+  "date": "2026-05-19",
+  "active_count": 42,
+  "punch_ins_today": 92,
+  "punch_outs_today": 50,
+  "feed": [
+    {
+      "id": "18452",
+      "employee": "James Anderson",
+      "department": "Engineering",
+      "action": "punch-in",
+      "time": "2026-05-19T12:06:00+05:30",
+      "device_employee_no": "101",
+      "frappe_employee_id": "EMP-101"
+    },
+    {
+      "id": "18451",
+      "employee": "Sarah Martinez",
+      "department": "Product",
+      "action": "punch-out",
+      "time": "2026-05-19T12:05:00+05:30",
+      "device_employee_no": "102",
+      "frappe_employee_id": "EMP-102"
+    }
+  ]
+}
+```
+
+Field notes:
+
+- `active_count`: employees with an odd punch count today (last punch treated as in).
+- `punch_ins_today`: employees with at least one punch today.
+- `punch_outs_today`: employees with an even punch count of 2 or more today (last punch treated as out).
+- `action`: `punch-in` or `punch-out`, derived by chronological punch order per employee for the day (1st in, 2nd out, 3rd in, …).
+- `employee`: device-reported name when present, otherwise Frappe employee name, otherwise device employee number.
+
+Frontend mapping example:
+
+```js
+const { active_count, punch_ins_today, feed } = await api("/api/live-attendance?limit=6");
+// activeCount: active_count, punchInsToday: punch_ins_today, feed items use action + time
+```
+
 ## Punch Data
 
 ### `GET /api/attendance-overview`
@@ -579,6 +641,7 @@ Response:
 
 ## Frontend Notes
 
+- Use `/api/live-attendance` for the Workforce pulse widget (active count, punch-ins, activity feed).
 - Use `/api/status` for cards and edge node health.
 - Use `/api/attendance-overview` for the first/last punch page.
 - Use `/api/punch-records` for the complete raw punch listing.

@@ -24,6 +24,7 @@
     { "name": "Health" },
     { "name": "Dashboard" },
     { "name": "Punches" },
+    { "name": "Live" },
     { "name": "HR" },
     { "name": "Frappe" },
     { "name": "Config" },
@@ -115,6 +116,32 @@
           "serial_no": { "type": "string" },
           "event_type": { "type": "string", "nullable": true },
           "minor": { "type": "integer", "nullable": true }
+        }
+      },
+      "LiveAttendanceFeedItem": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "employee": { "type": "string" },
+          "department": { "type": "string" },
+          "action": { "type": "string", "enum": ["punch-in", "punch-out"] },
+          "time": { "type": "string" },
+          "device_employee_no": { "type": "string" },
+          "frappe_employee_id": { "type": "string" }
+        }
+      },
+      "LiveAttendanceResponse": {
+        "type": "object",
+        "properties": {
+          "as_of": { "type": "string" },
+          "date": { "type": "string", "format": "date" },
+          "active_count": { "type": "integer" },
+          "punch_ins_today": { "type": "integer" },
+          "punch_outs_today": { "type": "integer" },
+          "feed": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/LiveAttendanceFeedItem" }
+          }
         }
       },
       "AttendanceOverviewRow": {
@@ -246,6 +273,37 @@
                     }
                   }
                 }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/live-attendance": {
+      "get": {
+        "tags": ["Live"],
+        "summary": "Live attendance log for Workforce pulse widget",
+        "description": "Returns today's active headcount, punch-in count, and a recent activity feed enriched with Frappe employee details when mapped.",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum feed items to return (most recent first).",
+            "schema": { "type": "integer", "minimum": 1, "maximum": 200, "default": 50 }
+          },
+          {
+            "name": "refresh_frappe",
+            "in": "query",
+            "description": "Use 1/true/yes to refresh cached Frappe employee details.",
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Live attendance summary and activity feed",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/LiveAttendanceResponse" }
               }
             }
           }

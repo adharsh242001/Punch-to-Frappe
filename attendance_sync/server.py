@@ -29,6 +29,7 @@ from config import settings
 from config.env_file import read_env, update_env
 from hrms.frappe_client import FrappeClient
 from processors.event_processor import EventProcessor
+from processors.live_attendance import build_live_attendance, live_calendar_today
 from processors.punch_selection import select_daily_punches
 from storage.factory import create_event_store
 from transport.security import (
@@ -452,6 +453,37 @@ def _load_frappe_employee_details(
         return {employee_id: dict(_employee_details_cache.get(employee_id, {})) for employee_id in unique_ids}, error
 
 
+def _live_attendance_payload(
+    store: Any,
+    frappe: FrappeClient,
+    *,
+    feed_limit: int,
+    refresh_frappe: bool,
+) -> dict[str, Any]:
+    today = live_calendar_today()
+    events = store.live_attendance_source_events()
+    employee_map = settings.load_employee_map()
+    device_ids = {str(event.get("employee") or "").strip() for event in events}
+    mapped_ids = [
+        employee_map.get(device_id, "")
+        for device_id in device_ids
+        if employee_map.get(device_id, "")
+    ]
+    details_by_id, _frappe_error = _load_frappe_employee_details(
+        frappe,
+        mapped_ids,
+        refresh=refresh_frappe,
+    )
+    return build_live_attendance(
+        events,
+        today=today,
+        employee_map=employee_map,
+        details_by_id=details_by_id,
+        feed_limit=feed_limit,
+        display_name=_employee_display_name,
+    )
+
+
 def _hr_verification_rows(
     store: Any,
     frappe: FrappeClient,
@@ -749,6 +781,20 @@ class EventIngestHandler(BaseHTTPRequestHandler):
                     "has_next": end < total,
                     "has_prev": page > 1,
                 },
+            )
+            return
+        if path == "/api/live-attendance":
+            feed_limit = _int_query(query, "limit", 50, 1, 200)
+            refresh_frappe = (query.get("refresh_frappe") or [""])[0].lower() in {"1", "true", "yes"}
+            _json_response(
+                self,
+                200,
+                _live_attendance_payload(
+                    self.store,
+                    self.frappe,
+                    feed_limit=feed_limit,
+                    refresh_frappe=refresh_frappe,
+                ),
             )
             return
         if path == "/api/alerts":

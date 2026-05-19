@@ -376,6 +376,39 @@ class EventStore:
         row = cur.fetchone()
         return int(row["count"]) if row else 0
 
+    def live_attendance_source_events(self, scan_limit: int = 10000) -> list[dict[str, Any]]:
+        cur = self._conn().execute(
+            """
+            SELECT id, payload
+            FROM inbound_events
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (scan_limit,),
+        )
+        rows: list[dict[str, Any]] = []
+        for row in cur.fetchall():
+            try:
+                payload = json.loads(row["payload"])
+            except Exception:
+                payload = {}
+            event_time = str(payload.get("time") or "").strip()
+            employee = str(
+                payload.get("employeeNoString") or payload.get("employeeNo") or ""
+            ).strip()
+            if not employee or not event_time:
+                continue
+            rows.append(
+                {
+                    "id": row["id"],
+                    "employee": employee,
+                    "event_time": event_time,
+                    "serial_no": payload.get("serialNo"),
+                    "name": payload.get("name"),
+                }
+            )
+        return rows
+
     def recent_inbound(self, limit: int = 50) -> list[dict[str, Any]]:
         cur = self._conn().execute(
             """

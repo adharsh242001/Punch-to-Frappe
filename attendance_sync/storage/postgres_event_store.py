@@ -380,6 +380,36 @@ class PostgresEventStore:
         ).fetchone()
         return int(row["count"]) if row else 0
 
+    def live_attendance_source_events(self, scan_limit: int = 10000) -> list[dict[str, Any]]:
+        rows = self._conn().execute(
+            """
+            SELECT id, payload
+            FROM inbound_events
+            ORDER BY id DESC
+            LIMIT %s
+            """,
+            (scan_limit,),
+        ).fetchall()
+        out: list[dict[str, Any]] = []
+        for row in rows:
+            payload = row["payload"] if isinstance(row["payload"], dict) else json.loads(row["payload"])
+            event_time = str(payload.get("time") or "").strip()
+            employee = str(
+                payload.get("employeeNoString") or payload.get("employeeNo") or ""
+            ).strip()
+            if not employee or not event_time:
+                continue
+            out.append(
+                {
+                    "id": row["id"],
+                    "employee": employee,
+                    "event_time": event_time,
+                    "serial_no": payload.get("serialNo"),
+                    "name": payload.get("name"),
+                }
+            )
+        return out
+
     def recent_inbound(self, limit: int = 50) -> list[dict[str, Any]]:
         rows = self._conn().execute(
             """
