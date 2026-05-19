@@ -526,6 +526,9 @@
         <div class="field"><label>API Secret <span id="hint-HRMS_API_SECRET" class="subtle"></span></label><input id="cfg-HRMS_API_SECRET" type="password" placeholder="leave blank to keep current" /></div>
         <div class="field"><label>Legacy Default Log Type</label><input id="cfg-DEFAULT_LOG_TYPE" /></div>
         <div class="field"><label>Late After Time</label><input id="cfg-LATE_AFTER_TIME" placeholder="09:30" /></div>
+        <div class="field"><label>Auto Push Enabled</label><select id="cfg-FRAPPE_AUTO_PUSH_ENABLED"><option value="false">false</option><option value="true">true</option></select></div>
+        <div class="field"><label>Auto Push Time</label><input id="cfg-FRAPPE_AUTO_PUSH_TIME" placeholder="22:00" /></div>
+        <div class="field"><label>Auto Push Timezone</label><input id="cfg-FRAPPE_AUTO_PUSH_TIMEZONE" placeholder="Asia/Kolkata" /></div>
       </div>
       <div class="card">
         <h2>Server</h2>
@@ -590,7 +593,7 @@ let frappePushLogs = [];
 const cfgKeys = [
   "HRMS_URL", "HRMS_API_KEY", "HRMS_API_SECRET", "POLL_INTERVAL", "DEDUP_WINDOW",
   "LOG_LEVEL", "SERVER_HOST", "SERVER_PORT", "STORAGE_BACKEND", "POSTGRES_DSN",
-  "DEFAULT_LOG_TYPE", "LATE_AFTER_TIME"
+  "DEFAULT_LOG_TYPE", "LATE_AFTER_TIME", "FRAPPE_AUTO_PUSH_ENABLED", "FRAPPE_AUTO_PUSH_TIME", "FRAPPE_AUTO_PUSH_TIMEZONE"
 ];
 
 function $(id) { return document.getElementById(id); }
@@ -685,7 +688,8 @@ function alertPill(severity) {
 }
 
 function renderStatus(s) {
-  $("serverLine").textContent = `${s.server.host}:${s.server.port} · ${s.server.storage_backend} · ${s.server.hrms_url || "Frappe URL not set"} · manual Frappe push`;
+  const pushMode = s.server.auto_push_enabled ? `auto push ${s.server.auto_push_time || "22:00"} ${s.server.auto_push_timezone || ""}` : "manual Frappe push";
+  $("serverLine").textContent = `${s.server.host}:${s.server.port} · ${s.server.storage_backend} · ${s.server.hrms_url || "Frappe URL not set"} · ${pushMode}`;
   serverLateAfter = s.server.late_after_time || "09:30";
   if ($("hrLateAfter") && !$("hrLateAfter").dataset.touched) {
     $("hrLateAfter").value = serverLateAfter;
@@ -705,6 +709,7 @@ function renderStatus(s) {
     ["Now", fmtTime(s.now)],
     ["Storage", s.server.storage_backend],
     ["Frappe", s.server.hrms_url || "not set"],
+    ["Frappe push", s.server.auto_push_enabled ? `scheduled daily at ${s.server.auto_push_time || "22:00"} ${s.server.auto_push_timezone || ""}` : "manual only"],
     ["Configured nodes", (s.configured_nodes || []).join(", ") || "none"],
     ["Last result", Object.entries(last.results || {}).map(([k,v]) => `${k}: ${v}`).join(", ") || "-"]
   ].map(([k,v]) => `<tr><th>${esc(k)}</th><td>${esc(v)}</td></tr>`).join("");

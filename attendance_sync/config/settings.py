@@ -98,6 +98,16 @@ HRMS_API_SECRET: str = os.getenv("HRMS_API_SECRET", "")
 DEFAULT_LOG_TYPE: str = os.getenv("DEFAULT_LOG_TYPE", "IN")
 LATE_AFTER_TIME: str = os.getenv("LATE_AFTER_TIME", "09:30")
 
+# ── Central server Frappe push schedule ──────────────────────────────────────
+FRAPPE_AUTO_PUSH_ENABLED: bool = os.getenv("FRAPPE_AUTO_PUSH_ENABLED", "false").lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+FRAPPE_AUTO_PUSH_TIME: str = os.getenv("FRAPPE_AUTO_PUSH_TIME", "22:00")
+FRAPPE_AUTO_PUSH_TIMEZONE: str = os.getenv("FRAPPE_AUTO_PUSH_TIMEZONE", "")
+
 
 def _optional_float(name: str, minimum: float, maximum: float) -> float | None:
     raw = os.getenv(name, "").strip()

@@ -125,7 +125,10 @@ All runtime settings are read from `.env`.
 | `HIKVISION_USE_HTTPS` | `true` | Use HTTPS for device calls. If connection fails, the client tries the other protocol. |
 | `HIKVISION_VERIFY_SSL` | `false` | Verify device SSL certificates. Usually false for local Hikvision devices. |
 | `DEVICE_NAMES` | empty | Friendly names sent to Frappe instead of raw IPs. |
-| `POLL_INTERVAL` | `600` | Seconds between edge/continuous poller cycles. The central distributed server stores uploads and pushes to Frappe manually from the dashboard. |
+| `POLL_INTERVAL` | `600` | Seconds between edge/continuous poller cycles. |
+| `FRAPPE_AUTO_PUSH_ENABLED` | `false` | When true, the central server automatically runs the Frappe push once per day. |
+| `FRAPPE_AUTO_PUSH_TIME` | `22:00` | Local server time for the daily automatic Frappe push. |
+| `FRAPPE_AUTO_PUSH_TIMEZONE` | empty | Optional IANA timezone for auto push, for example `Asia/Kolkata`. If empty, the server/container local timezone is used. |
 | `FIRST_RUN_LOOKBACK_HOURS` | `24` | On service startup, fetch this many previous hours. |
 | `DEDUP_WINDOW` | `30` | Ignore another punch from the same mapped employee within this many seconds. |
 | `EVENT_MAJOR` | `5` | Hikvision event major filter. |
@@ -308,7 +311,7 @@ What it does:
 
 - Receives `POST /events` batches from PC A and PC B.
 - Stores incoming events in `data/events.db`.
-- Stores incoming events until you press **Push now** in the dashboard or call the manual push API.
+- Stores incoming events until you press **Push now**, call the manual push API, or the configured daily auto-push time arrives.
 - Uses the same employee mapping, duplicate checks, and retry queue as the existing sync service.
 - Deduplicates incoming raw uploads by edge node, device IP, and device serial number so multiple devices behind one PC do not hide each other's punches.
 
@@ -329,7 +332,7 @@ Open `http://central-server-ip:8090/` in a browser. The dashboard shows:
 - A paginated **HR Verify** page that maps device employee numbers to Frappe employee names/details and shows late-coming status for HR review
 - A paginated **All Punch Records** page for inspecting every raw punch received from edge PCs
 - Recent inbound events, recently pushed checkins, and the retry queue
-- A **Manual Push to Frappe** button that drains the queue and runs retries. In distributed server mode, Frappe push is manual; the server does not auto-push every 600 seconds.
+- A **Manual Push to Frappe** button that drains the queue and runs retries. If `FRAPPE_AUTO_PUSH_ENABLED=true`, the server also pushes once per day at `FRAPPE_AUTO_PUSH_TIME` in `FRAPPE_AUTO_PUSH_TIMEZONE`.
 - Every pushed `Employee Checkin` sets `skip_auto_attendance` to `0`.
 - The last push run, including trigger, result breakdown, and retry count
 - An **Employee Map** tab for adding, editing, searching, and removing device employee number to Frappe employee ID mappings. Restart the server after saving so the processor reloads the map.

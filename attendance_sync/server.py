@@ -14,11 +14,12 @@ import signal
 import sys
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, time as datetime_time, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
+from zoneinfo import ZoneInfo
 
 import os as _os
 _os.chdir(_os.path.dirname(_os.path.abspath(__file__)))
@@ -77,6 +78,9 @@ _EDITABLE_KEYS = (
     "POSTGRES_DSN",
     "DEFAULT_LOG_TYPE",
     "LATE_AFTER_TIME",
+    "FRAPPE_AUTO_PUSH_ENABLED",
+    "FRAPPE_AUTO_PUSH_TIME",
+    "FRAPPE_AUTO_PUSH_TIMEZONE",
 )
 
 _employee_details_lock = threading.Lock()
@@ -381,6 +385,31 @@ def _late_threshold_minutes(value: str) -> tuple[str, int]:
         return f"{int(hour):02d}:{int(minute):02d}", threshold
     except (TypeError, ValueError):
         return "09:30", 9 * 60 + 30
+
+
+def _parse_schedule_time(value: str) -> datetime_time:
+    raw = str(value or "22:00").strip()
+    try:
+        hour, minute, *_ = raw.split(":")
+        parsed = datetime_time(hour=int(hour), minute=int(minute))
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"FRAPPE_AUTO_PUSH_TIME must be HH:MM, got {raw!r}") from exc
+    return parsed
+
+
+def _auto_push_due(now: datetime, scheduled_time: datetime_time, last_run_date: str | None) -> bool:
+    today = now.date().isoformat()
+    return last_run_date != today and now.time() >= scheduled_time
+
+
+def _schedule_timezone() -> ZoneInfo | None:
+    name = str(settings.FRAPPE_AUTO_PUSH_TIMEZONE or "").strip()
+    if not name:
+        return None
+    try:
+        return ZoneInfo(name)
+    except Exception as exc:  # noqa: BLE001
+        raise ValueError(f"FRAPPE_AUTO_PUSH_TIMEZONE is invalid: {name!r}") from exc
 
 
 def _employee_display_name(details: dict[str, Any]) -> str:
@@ -911,6 +940,9 @@ class EventIngestHandler(BaseHTTPRequestHandler):
                 "storage_backend": settings.STORAGE_BACKEND,
                 "hrms_url": settings.HRMS_URL,
                 "late_after_time": settings.LATE_AFTER_TIME,
+                "auto_push_enabled": settings.FRAPPE_AUTO_PUSH_ENABLED,
+                "auto_push_time": settings.FRAPPE_AUTO_PUSH_TIME,
+                "auto_push_timezone": settings.FRAPPE_AUTO_PUSH_TIMEZONE or "server local",
             },
             "counts": {
                 "pending": counts.get("pending", 0),
@@ -981,15 +1013,27 @@ def main() -> None:
     server_thread = threading.Thread(target=server.serve_forever, daemon=True)
     server_thread.start()
 
+    auto_push_time = _parse_schedule_time(settings.FRAPPE_AUTO_PUSH_TIME)
+    auto_push_tz = _schedule_timezone()
+    last_auto_push_date: str | None = None
     logger.info(
-        "Central sync server listening on %s:%d; dashboard at http://%s:%d/ | Frappe push is manual",
+        "Central sync server listening on %s:%d; dashboard at http://%s:%d/ | auto Frappe push=%s at %s (%s)",
         settings.SERVER_HOST, settings.SERVER_PORT,
         settings.SERVER_HOST, settings.SERVER_PORT,
+        "enabled" if settings.FRAPPE_AUTO_PUSH_ENABLED else "disabled",
+        settings.FRAPPE_AUTO_PUSH_TIME,
+        settings.FRAPPE_AUTO_PUSH_TIMEZONE or "server local time",
     )
 
     try:
         while _running:
-            _wake_event.wait(timeout=1.0)
+            if settings.FRAPPE_AUTO_PUSH_ENABLED:
+                now = datetime.now(auto_push_tz) if auto_push_tz else datetime.now()
+                if _auto_push_due(now, auto_push_time, last_auto_push_date):
+                    last_auto_push_date = now.date().isoformat()
+                    logger.info("Running scheduled nightly Frappe push for %s.", last_auto_push_date)
+                    run_push(store, processor, trigger="scheduled-nightly")
+            _wake_event.wait(timeout=30.0 if settings.FRAPPE_AUTO_PUSH_ENABLED else 1.0)
             _wake_event.clear()
     finally:
         logger.info("Stopping central sync server.")
