@@ -20,6 +20,10 @@ services:
     container_name: punch-sync-server
     restart: unless-stopped
     user: "10001:10001"
+    group_add:
+      # Set DOCKER_GID on the host if this default does not match:
+      #   DOCKER_GID=$(getent group docker | cut -d: -f3) docker compose up -d
+      - "${DOCKER_GID:-998}"
     env_file:
       - .env.server
     expose:
@@ -32,6 +36,11 @@ services:
       # persist edits back to the host file. Restart the container to apply.
       # Must be writable by uid 10001 inside the container.
       - ./.env.server:/app/.env
+      # Optional: allows the dashboard to restart this container after saving
+      # employee_map.json when EMPLOYEE_MAP_RESTART_COMMAND is configured.
+      # This gives the app Docker control of the host; keep the env command
+      # empty if you do not want that.
+      - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
       postgres:
         condition: service_healthy

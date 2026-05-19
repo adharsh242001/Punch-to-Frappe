@@ -4,6 +4,7 @@ All values have sensible defaults; required values raise on missing.
 """
 import json
 import os
+import shlex
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -107,6 +108,12 @@ FRAPPE_AUTO_PUSH_ENABLED: bool = os.getenv("FRAPPE_AUTO_PUSH_ENABLED", "false").
 }
 FRAPPE_AUTO_PUSH_TIME: str = os.getenv("FRAPPE_AUTO_PUSH_TIME", "22:00")
 FRAPPE_AUTO_PUSH_TIMEZONE: str = os.getenv("FRAPPE_AUTO_PUSH_TIMEZONE", "")
+
+# Optional command run after dashboard Employee Map save. Leave empty by default;
+# enabling this usually requires Docker CLI/socket access inside the container.
+EMPLOYEE_MAP_RESTART_COMMAND: list[str] = shlex.split(
+    os.getenv("EMPLOYEE_MAP_RESTART_COMMAND", "")
+)
 
 
 def _optional_float(name: str, minimum: float, maximum: float) -> float | None:

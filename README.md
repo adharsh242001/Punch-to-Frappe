@@ -129,6 +129,7 @@ All runtime settings are read from `.env`.
 | `FRAPPE_AUTO_PUSH_ENABLED` | `false` | When true, the central server automatically runs the Frappe push once per day. |
 | `FRAPPE_AUTO_PUSH_TIME` | `22:00` | Local server time for the daily automatic Frappe push. |
 | `FRAPPE_AUTO_PUSH_TIMEZONE` | empty | Optional IANA timezone for auto push, for example `Asia/Kolkata`. If empty, the server/container local timezone is used. |
+| `EMPLOYEE_MAP_RESTART_COMMAND` | empty | Optional command run after saving Employee Map from the dashboard, for example `docker restart punch-sync-server`. |
 | `FIRST_RUN_LOOKBACK_HOURS` | `24` | On service startup, fetch this many previous hours. |
 | `DEDUP_WINDOW` | `30` | Ignore another punch from the same mapped employee within this many seconds. |
 | `EVENT_MAJOR` | `5` | Hikvision event major filter. |
@@ -344,6 +345,21 @@ In Docker, Nginx protects the dashboard and `/api/*` with basic auth from
 sign uploads with HMAC.
 
 Frontend API documentation is available in [`FRONTEND_API_README.md`](FRONTEND_API_README.md). The running server also serves Swagger UI at `/api/docs` and the raw OpenAPI spec at `/api/openapi.json`.
+
+To let the dashboard restart `punch-sync-server` after saving Employee Map in Docker:
+
+```bash
+export DOCKER_GID=$(getent group docker | cut -d: -f3)
+docker compose up -d --build
+```
+
+Set this in `.env.server`:
+
+```env
+EMPLOYEE_MAP_RESTART_COMMAND=docker restart punch-sync-server
+```
+
+This uses the Docker socket mounted into the server container, so only enable it on a trusted server.
 
 ### PC A / PC B Edge Setup
 

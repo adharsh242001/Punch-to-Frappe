@@ -11,6 +11,7 @@ import json
 import logging
 import errno
 import signal
+import subprocess
 import sys
 import threading
 import time
@@ -84,6 +85,7 @@ _EDITABLE_KEYS = (
     "FRAPPE_AUTO_PUSH_ENABLED",
     "FRAPPE_AUTO_PUSH_TIME",
     "FRAPPE_AUTO_PUSH_TIMEZONE",
+    "EMPLOYEE_MAP_RESTART_COMMAND",
 )
 
 _employee_details_lock = threading.Lock()
@@ -329,6 +331,54 @@ def _save_employee_map(body: dict[str, Any]) -> int:
         except FileNotFoundError:
             pass
     return len(employee_map)
+
+
+def _execute_employee_map_restart_command(command: list[str]) -> None:
+    time.sleep(1.0)
+    try:
+        completed = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Employee map restart command failed to start: %s", exc)
+        return
+
+    if completed.returncode == 0:
+        logger.info("Employee map restart command completed successfully.")
+        return
+
+    logger.error(
+        "Employee map restart command failed: returncode=%s stdout=%s stderr=%s",
+        completed.returncode,
+        completed.stdout[-500:],
+        completed.stderr[-500:],
+    )
+
+
+def _schedule_employee_map_restart_command() -> dict[str, Any]:
+    command = settings.EMPLOYEE_MAP_RESTART_COMMAND
+    if not command:
+        return {
+            "attempted": False,
+            "ok": False,
+            "message": "EMPLOYEE_MAP_RESTART_COMMAND is not configured.",
+        }
+    threading.Thread(
+        target=_execute_employee_map_restart_command,
+        args=(command,),
+        daemon=True,
+    ).start()
+    return {
+        "attempted": True,
+        "ok": True,
+        "command": command,
+        "scheduled": True,
+        "message": "Restart command scheduled.",
+    }
 
 
 def _filter_attendance_overview(
@@ -921,6 +971,7 @@ class EventIngestHandler(BaseHTTPRequestHandler):
             )
             return
 
+        restart = _schedule_employee_map_restart_command()
         _json_response(
             self,
             200,
@@ -928,7 +979,8 @@ class EventIngestHandler(BaseHTTPRequestHandler):
                 "ok": True,
                 "count": count,
                 "path": str(settings.employee_map_path()),
-                "restart_required": True,
+                "restart_required": not restart.get("ok", False),
+                "restart": restart,
             },
         )
 

@@ -529,6 +529,7 @@
         <div class="field"><label>Auto Push Enabled</label><select id="cfg-FRAPPE_AUTO_PUSH_ENABLED"><option value="false">false</option><option value="true">true</option></select></div>
         <div class="field"><label>Auto Push Time</label><input id="cfg-FRAPPE_AUTO_PUSH_TIME" placeholder="22:00" /></div>
         <div class="field"><label>Auto Push Timezone</label><input id="cfg-FRAPPE_AUTO_PUSH_TIMEZONE" placeholder="Asia/Kolkata" /></div>
+        <div class="field"><label>Employee Map Restart Command</label><input id="cfg-EMPLOYEE_MAP_RESTART_COMMAND" placeholder="docker restart punch-sync-server" /></div>
       </div>
       <div class="card">
         <h2>Server</h2>
@@ -593,7 +594,8 @@ let frappePushLogs = [];
 const cfgKeys = [
   "HRMS_URL", "HRMS_API_KEY", "HRMS_API_SECRET", "POLL_INTERVAL", "DEDUP_WINDOW",
   "LOG_LEVEL", "SERVER_HOST", "SERVER_PORT", "STORAGE_BACKEND", "POSTGRES_DSN",
-  "DEFAULT_LOG_TYPE", "LATE_AFTER_TIME", "FRAPPE_AUTO_PUSH_ENABLED", "FRAPPE_AUTO_PUSH_TIME", "FRAPPE_AUTO_PUSH_TIMEZONE"
+  "DEFAULT_LOG_TYPE", "LATE_AFTER_TIME", "FRAPPE_AUTO_PUSH_ENABLED", "FRAPPE_AUTO_PUSH_TIME", "FRAPPE_AUTO_PUSH_TIMEZONE",
+  "EMPLOYEE_MAP_RESTART_COMMAND"
 ];
 
 function $(id) { return document.getElementById(id); }
@@ -1316,7 +1318,14 @@ async function saveEmployeeMap() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ entries })
     });
-    toast(`Saved ${result.count} employee mapping(s). Restart server to apply.`);
+    const restart = result.restart || {};
+    if (restart.ok) {
+      toast(`Saved ${result.count} mapping(s). Restart command sent.`);
+    } else if (restart.attempted) {
+      toast(`Saved ${result.count} mapping(s), but restart failed: ${restart.stderr || restart.message || "check logs"}`, true);
+    } else {
+      toast(`Saved ${result.count} employee mapping(s). Restart server to apply.`);
+    }
     loadEmployeeMap();
   } catch (err) {
     toast("Employee map save failed: " + err.message, true);
