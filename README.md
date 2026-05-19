@@ -343,7 +343,7 @@ In Docker, Nginx protects the dashboard and `/api/*` with basic auth from
 `/events` endpoint stays reachable without basic auth because edge PCs already
 sign uploads with HMAC.
 
-Frontend API documentation is available in [`FRONTEND_API_README.md`](FRONTEND_API_README.md).
+Frontend API documentation is available in [`FRONTEND_API_README.md`](FRONTEND_API_README.md). The running server also serves Swagger UI at `/api/docs` and the raw OpenAPI spec at `/api/openapi.json`.
 
 ### PC A / PC B Edge Setup
 

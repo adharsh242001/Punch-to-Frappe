@@ -1,0 +1,698 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Punch-to-Frappe API",
+    "version": "1.0.0",
+    "description": "Central attendance sync server API for dashboard/frontends. The server stores edge-device punches, exposes first/last punch views, HR verification data, Frappe push logs, configuration, and manual push controls."
+  },
+  "servers": [
+    {
+      "url": "http://localhost:8080",
+      "description": "Python server direct/local"
+    },
+    {
+      "url": "http://{host}:8090",
+      "description": "Docker/Nginx dashboard",
+      "variables": {
+        "host": {
+          "default": "central-server-ip"
+        }
+      }
+    }
+  ],
+  "tags": [
+    { "name": "Health" },
+    { "name": "Dashboard" },
+    { "name": "Punches" },
+    { "name": "HR" },
+    { "name": "Frappe" },
+    { "name": "Config" },
+    { "name": "Edge" }
+  ],
+  "components": {
+    "securitySchemes": {
+      "basicAuth": {
+        "type": "http",
+        "scheme": "basic",
+        "description": "Used by Nginx for /api/* on port 8090."
+      },
+      "edgeNodeId": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-Node-Id"
+      },
+      "edgeTimestamp": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-Timestamp"
+      },
+      "edgeSignature": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-Signature"
+      }
+    },
+    "parameters": {
+      "page": {
+        "name": "page",
+        "in": "query",
+        "schema": { "type": "integer", "minimum": 1, "default": 1 }
+      },
+      "pageSize": {
+        "name": "page_size",
+        "in": "query",
+        "schema": { "type": "integer", "minimum": 10, "maximum": 1000, "default": 100 }
+      },
+      "search": {
+        "name": "search",
+        "in": "query",
+        "schema": { "type": "string" }
+      },
+      "from": {
+        "name": "from",
+        "in": "query",
+        "description": "Inclusive date filter in YYYY-MM-DD format.",
+        "schema": { "type": "string", "format": "date" }
+      },
+      "to": {
+        "name": "to",
+        "in": "query",
+        "description": "Inclusive date filter in YYYY-MM-DD format.",
+        "schema": { "type": "string", "format": "date" }
+      }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "properties": {
+          "error": { "type": "string" },
+          "ok": { "type": "boolean" }
+        }
+      },
+      "Pagination": {
+        "type": "object",
+        "properties": {
+          "page": { "type": "integer" },
+          "page_size": { "type": "integer" },
+          "total": { "type": "integer" },
+          "has_next": { "type": "boolean" },
+          "has_prev": { "type": "boolean" }
+        }
+      },
+      "PunchRecord": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer" },
+          "source_node": { "type": "string" },
+          "status": { "type": "string", "enum": ["pending", "done"] },
+          "received_at": { "type": "string" },
+          "processed_at": { "type": "string", "nullable": true },
+          "last_result": { "type": "string", "nullable": true },
+          "employee": { "type": "string" },
+          "name": { "type": "string", "nullable": true },
+          "device_ip": { "type": "string" },
+          "event_time": { "type": "string" },
+          "serial_no": { "type": "string" },
+          "event_type": { "type": "string", "nullable": true },
+          "minor": { "type": "integer", "nullable": true }
+        }
+      },
+      "AttendanceOverviewRow": {
+        "type": "object",
+        "properties": {
+          "employee": { "type": "string" },
+          "date": { "type": "string", "format": "date" },
+          "source_nodes": { "type": "array", "items": { "type": "string" } },
+          "devices": { "type": "array", "items": { "type": "string" } },
+          "punch_count": { "type": "integer" },
+          "first_time": { "type": "string", "nullable": true },
+          "first_result": { "type": "string", "nullable": true },
+          "last_time": { "type": "string", "nullable": true },
+          "last_result": { "type": "string", "nullable": true }
+        }
+      },
+      "HrVerificationRow": {
+        "type": "object",
+        "properties": {
+          "date": { "type": "string", "format": "date" },
+          "device_employee_no": { "type": "string" },
+          "frappe_employee_id": { "type": "string" },
+          "employee_name": { "type": "string" },
+          "department": { "type": "string" },
+          "designation": { "type": "string" },
+          "branch": { "type": "string" },
+          "company": { "type": "string" },
+          "employee_status": { "type": "string" },
+          "default_shift": { "type": "string" },
+          "first_time": { "type": "string", "nullable": true },
+          "first_result": { "type": "string", "nullable": true },
+          "last_time": { "type": "string", "nullable": true },
+          "last_result": { "type": "string", "nullable": true },
+          "punch_count": { "type": "integer" },
+          "late_after": { "type": "string", "example": "09:30" },
+          "late_by_minutes": { "type": "integer", "nullable": true },
+          "late_status": { "type": "string", "enum": ["late", "on_time", "missing_first_punch"] },
+          "mapping_status": { "type": "string", "enum": ["mapped", "missing_map"] },
+          "frappe_details_status": { "type": "string", "enum": ["loaded", "not_found", "not_mapped"] }
+        }
+      },
+      "PushLog": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer" },
+          "attempted_at": { "type": "string" },
+          "serial_no": { "type": "string" },
+          "employee_no": { "type": "string" },
+          "hrms_id": { "type": "string" },
+          "event_time": { "type": "string" },
+          "device_ip": { "type": "string" },
+          "device_id": { "type": "string" },
+          "log_type": { "type": "string", "nullable": true, "enum": ["IN", "OUT", null] },
+          "result": { "type": "string" },
+          "http_status": { "type": "integer", "nullable": true },
+          "payload": { "type": "object", "additionalProperties": true },
+          "response_body": { "type": "string" },
+          "error": { "type": "string" }
+        }
+      },
+      "EmployeeMapEntry": {
+        "type": "object",
+        "properties": {
+          "device_employee_no": { "type": "string" },
+          "frappe_employee_id": { "type": "string" }
+        },
+        "required": ["device_employee_no", "frappe_employee_id"]
+      }
+    }
+  },
+  "security": [
+    { "basicAuth": [] }
+  ],
+  "paths": {
+    "/health": {
+      "get": {
+        "tags": ["Health"],
+        "summary": "Health check",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Server health",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": { "type": "boolean" },
+                    "pending_events": { "type": "integer" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/status": {
+      "get": {
+        "tags": ["Dashboard"],
+        "summary": "Dashboard status, counts, last push, edge node state",
+        "responses": {
+          "200": {
+            "description": "Status",
+            "content": {
+              "application/json": {
+                "schema": { "type": "object", "additionalProperties": true }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/events": {
+      "get": {
+        "tags": ["Punches"],
+        "summary": "Recent inbound events",
+        "responses": {
+          "200": {
+            "description": "Recent inbound events, fixed limit 100",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "events": {
+                      "type": "array",
+                      "items": { "$ref": "#/components/schemas/PunchRecord" }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/punch-records": {
+      "get": {
+        "tags": ["Punches"],
+        "summary": "Paginated raw punch records",
+        "parameters": [
+          { "$ref": "#/components/parameters/page" },
+          { "$ref": "#/components/parameters/pageSize" },
+          { "$ref": "#/components/parameters/search" },
+          { "$ref": "#/components/parameters/from" },
+          { "$ref": "#/components/parameters/to" },
+          {
+            "name": "status",
+            "in": "query",
+            "schema": { "type": "string", "enum": ["", "pending", "done"] }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Paginated raw punch records",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    { "$ref": "#/components/schemas/Pagination" },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "records": {
+                          "type": "array",
+                          "items": { "$ref": "#/components/schemas/PunchRecord" }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/attendance-overview": {
+      "get": {
+        "tags": ["Punches"],
+        "summary": "Paginated first/last punch overview by employee/date",
+        "parameters": [
+          { "$ref": "#/components/parameters/page" },
+          { "$ref": "#/components/parameters/pageSize" },
+          { "$ref": "#/components/parameters/search" },
+          { "$ref": "#/components/parameters/from" },
+          { "$ref": "#/components/parameters/to" }
+        ],
+        "responses": {
+          "200": {
+            "description": "First and last punch overview",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    { "$ref": "#/components/schemas/Pagination" },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "overview": {
+                          "type": "array",
+                          "items": { "$ref": "#/components/schemas/AttendanceOverviewRow" }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/hr-verification": {
+      "get": {
+        "tags": ["HR"],
+        "summary": "HR verification view with Frappe employee details and late status",
+        "parameters": [
+          { "$ref": "#/components/parameters/page" },
+          { "$ref": "#/components/parameters/pageSize" },
+          { "$ref": "#/components/parameters/search" },
+          { "$ref": "#/components/parameters/from" },
+          { "$ref": "#/components/parameters/to" },
+          {
+            "name": "late_after",
+            "in": "query",
+            "schema": { "type": "string", "example": "09:30" }
+          },
+          {
+            "name": "refresh_frappe",
+            "in": "query",
+            "schema": { "type": "string", "enum": ["1", "true", "yes"] }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "HR verification rows",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    { "$ref": "#/components/schemas/Pagination" },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "rows": {
+                          "type": "array",
+                          "items": { "$ref": "#/components/schemas/HrVerificationRow" }
+                        },
+                        "summary": {
+                          "type": "object",
+                          "additionalProperties": true
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/alerts": {
+      "get": {
+        "tags": ["Dashboard"],
+        "summary": "Dashboard alerts",
+        "responses": {
+          "200": {
+            "description": "Alerts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "alerts": {
+                      "type": "array",
+                      "items": { "type": "object", "additionalProperties": true }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/retries": {
+      "get": {
+        "tags": ["Frappe"],
+        "summary": "Retry queue",
+        "responses": {
+          "200": {
+            "description": "Retry queue",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "retries": {
+                      "type": "array",
+                      "items": { "type": "object", "additionalProperties": true }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/processed": {
+      "get": {
+        "tags": ["Frappe"],
+        "summary": "Recently processed/pushed records",
+        "responses": {
+          "200": {
+            "description": "Recently processed records",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "processed": {
+                      "type": "array",
+                      "items": { "type": "object", "additionalProperties": true }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/frappe-push-logs": {
+      "get": {
+        "tags": ["Frappe"],
+        "summary": "Recent Frappe push attempt logs",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": { "type": "integer", "minimum": 10, "maximum": 500, "default": 100 }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Push attempt logs",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "logs": {
+                      "type": "array",
+                      "items": { "$ref": "#/components/schemas/PushLog" }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/push": {
+      "post": {
+        "tags": ["Frappe"],
+        "summary": "Run manual Frappe push",
+        "description": "Processes pending inbound events, pushes only first IN and last OUT per employee/date, skips middle punches, and forces retry queue processing.",
+        "responses": {
+          "200": {
+            "description": "Push result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": { "type": "boolean" },
+                    "processed": { "type": "integer" },
+                    "retries": { "type": "integer" },
+                    "results": { "type": "object", "additionalProperties": { "type": "integer" } }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/config": {
+      "get": {
+        "tags": ["Config"],
+        "summary": "Get editable server configuration",
+        "responses": {
+          "200": {
+            "description": "Config view",
+            "content": {
+              "application/json": {
+                "schema": { "type": "object", "additionalProperties": true }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": ["Config"],
+        "summary": "Update editable server configuration",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "values": { "type": "object", "additionalProperties": { "type": "string" } },
+                  "nodes": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "node_id": { "type": "string" },
+                        "secret": { "type": "string" }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Config saved",
+            "content": {
+              "application/json": {
+                "schema": { "type": "object", "additionalProperties": true }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/employee-map": {
+      "get": {
+        "tags": ["Config"],
+        "summary": "Get employee map",
+        "responses": {
+          "200": {
+            "description": "Employee map",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "path": { "type": "string" },
+                    "count": { "type": "integer" },
+                    "entries": {
+                      "type": "array",
+                      "items": { "$ref": "#/components/schemas/EmployeeMapEntry" }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": ["Config"],
+        "summary": "Replace employee map",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "entries": {
+                    "type": "array",
+                    "items": { "$ref": "#/components/schemas/EmployeeMapEntry" }
+                  }
+                },
+                "required": ["entries"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Employee map saved",
+            "content": {
+              "application/json": {
+                "schema": { "type": "object", "additionalProperties": true }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/events": {
+      "post": {
+        "tags": ["Edge"],
+        "summary": "Edge PC batch upload endpoint",
+        "description": "For edge agents only. Requires HMAC headers.",
+        "security": [
+          { "edgeNodeId": [], "edgeTimestamp": [], "edgeSignature": [] }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "events": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": true,
+                      "properties": {
+                        "employeeNoString": { "type": "string" },
+                        "name": { "type": "string" },
+                        "deviceIP": { "type": "string" },
+                        "time": { "type": "string" },
+                        "serialNo": { "type": "string" },
+                        "eventType": { "type": "string" },
+                        "minor": { "type": "integer" }
+                      }
+                    }
+                  }
+                },
+                "required": ["events"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Batch accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "accepted": { "type": "integer" },
+                    "inserted": { "type": "integer" },
+                    "skipped": { "type": "integer" }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized HMAC headers"
+          }
+        }
+      }
+    },
+    "/api/openapi.json": {
+      "get": {
+        "tags": ["Dashboard"],
+        "summary": "OpenAPI JSON specification",
+        "responses": {
+          "200": { "description": "OpenAPI specification" }
+        }
+      }
+    },
+    "/api/docs": {
+      "get": {
+        "tags": ["Dashboard"],
+        "summary": "Swagger UI",
+        "responses": {
+          "200": { "description": "Swagger UI HTML" }
+        }
+      }
+    }
+  }
+}

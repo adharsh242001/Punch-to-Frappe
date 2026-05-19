@@ -29,6 +29,27 @@ All API responses are JSON. Error responses usually look like:
 { "error": "message" }
 ```
 
+## Swagger UI
+
+The server also serves interactive Swagger docs:
+
+```text
+http://<server-ip>:8090/api/docs
+```
+
+Raw OpenAPI JSON:
+
+```text
+http://<server-ip>:8090/api/openapi.json
+```
+
+Direct Python-server URLs, useful from inside the server:
+
+```text
+http://127.0.0.1:8080/api/docs
+http://127.0.0.1:8080/api/openapi.json
+```
+
 ## Dashboard Status
 
 ### `GET /health`

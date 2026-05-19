@@ -49,6 +49,8 @@ _push_lock = threading.Lock()
 _wake_event = threading.Event()
 
 _DASHBOARD_HTML_PATH = Path(__file__).resolve().parent / "dashboard.html"
+_OPENAPI_JSON_PATH = Path(__file__).resolve().parent / "openapi.json"
+_SWAGGER_HTML_PATH = Path(__file__).resolve().parent / "swagger.html"
 _ENV_PATH = Path(__file__).resolve().parent.parent / ".env"
 _last_push_lock = threading.Lock()
 _last_push: dict[str, Any] = {
@@ -659,6 +661,12 @@ class EventIngestHandler(BaseHTTPRequestHandler):
         if path in ("/", "/dashboard"):
             self._serve_dashboard()
             return
+        if path in ("/api/docs", "/docs", "/swagger"):
+            self._serve_swagger()
+            return
+        if path == "/api/openapi.json":
+            self._serve_openapi_json()
+            return
         if path == "/api/status":
             self._serve_status()
             return
@@ -928,6 +936,25 @@ class EventIngestHandler(BaseHTTPRequestHandler):
             _html_response(self, 500, "<h1>dashboard.html missing</h1>")
             return
         _html_response(self, 200, html)
+
+    def _serve_swagger(self) -> None:
+        try:
+            html = _SWAGGER_HTML_PATH.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            _html_response(self, 500, "<h1>swagger.html missing</h1>")
+            return
+        _html_response(self, 200, html)
+
+    def _serve_openapi_json(self) -> None:
+        try:
+            payload = json.loads(_OPENAPI_JSON_PATH.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            _json_response(self, 500, {"error": "openapi.json missing"})
+            return
+        except json.JSONDecodeError as exc:
+            _json_response(self, 500, {"error": f"openapi.json invalid: {exc}"})
+            return
+        _json_response(self, 200, payload)
 
     def _serve_status(self) -> None:
         counts = self.store.inbound_counts()
