@@ -379,7 +379,7 @@ class EventStore:
     def live_attendance_source_events(self, scan_limit: int = 10000) -> list[dict[str, Any]]:
         cur = self._conn().execute(
             """
-            SELECT id, payload
+            SELECT id, source_node, payload
             FROM inbound_events
             ORDER BY id DESC
             LIMIT ?
@@ -398,6 +398,9 @@ class EventStore:
             ).strip()
             if not employee or not event_time:
                 continue
+            device_ip = str(
+                payload.get("deviceIP") or payload.get("deviceIp") or ""
+            ).strip()
             rows.append(
                 {
                     "id": row["id"],
@@ -405,6 +408,8 @@ class EventStore:
                     "event_time": event_time,
                     "serial_no": payload.get("serialNo"),
                     "name": payload.get("name"),
+                    "device_ip": device_ip,
+                    "source_node": row["source_node"],
                 }
             )
         return rows

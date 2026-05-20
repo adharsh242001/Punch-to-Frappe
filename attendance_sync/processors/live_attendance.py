@@ -29,6 +29,15 @@ def _action_for_punch_index(index: int) -> str:
     return "punch-in" if index % 2 == 1 else "punch-out"
 
 
+def resolve_device_name(device_ip: str) -> str:
+    from config import settings
+
+    ip = str(device_ip or "").strip()
+    if not ip:
+        return ""
+    return settings.DEVICE_NAMES.get(ip, ip)
+
+
 def build_live_attendance(
     events: list[dict[str, Any]],
     *,
@@ -104,8 +113,9 @@ def build_live_attendance(
         details = details_by_id.get(frappe_employee_id, {})
         serial_no = str(event.get("serial_no") or "")
         punch_index = punch_index_by_serial.get(serial_no, 1)
-        device_name = str(event.get("name") or "").strip()
-        employee_label = device_name or display_name(details) or device_employee_no
+        punch_device_name = str(event.get("name") or "").strip()
+        employee_label = punch_device_name or display_name(details) or device_employee_no
+        device_ip = str(event.get("device_ip") or "").strip()
         feed.append(
             {
                 "id": str(event.get("id") or serial_no or device_employee_no),
@@ -115,6 +125,8 @@ def build_live_attendance(
                 "time": str(event.get("event_time") or ""),
                 "device_employee_no": device_employee_no,
                 "frappe_employee_id": frappe_employee_id,
+                "device_ip": device_ip,
+                "device_name": resolve_device_name(device_ip),
             }
         )
 

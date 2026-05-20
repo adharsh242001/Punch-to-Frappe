@@ -127,7 +127,9 @@
           "action": { "type": "string", "enum": ["punch-in", "punch-out"] },
           "time": { "type": "string" },
           "device_employee_no": { "type": "string" },
-          "frappe_employee_id": { "type": "string" }
+          "frappe_employee_id": { "type": "string" },
+          "device_ip": { "type": "string" },
+          "device_name": { "type": "string" }
         }
       },
       "LiveAttendanceResponse": {

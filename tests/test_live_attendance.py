@@ -6,6 +6,7 @@ import sys
 ROOT = os.path.join(os.path.dirname(__file__), "..", "attendance_sync")
 sys.path.insert(0, os.path.abspath(ROOT))
 
+from config import settings
 from processors.live_attendance import build_live_attendance
 
 
@@ -17,6 +18,7 @@ class LiveAttendanceTests(unittest.TestCase):
                 "employee": "101",
                 "event_time": "2026-05-19T18:00:00+05:30",
                 "serial_no": "c",
+                "device_ip": "10.10.80.51",
             },
             {
                 "id": 2,
@@ -43,6 +45,8 @@ class LiveAttendanceTests(unittest.TestCase):
             "EMP-102": {"employee_name": "Sarah Martinez", "department": "Product"},
         }
 
+        settings.DEVICE_NAMES["10.10.80.51"] = "First Floor OUT"
+
         payload = build_live_attendance(
             events,
             today="2026-05-19",
@@ -58,6 +62,8 @@ class LiveAttendanceTests(unittest.TestCase):
         self.assertEqual(len(payload["feed"]), 3)
         self.assertEqual(payload["feed"][0]["employee"], "James Anderson")
         self.assertEqual(payload["feed"][0]["action"], "punch-out")
+        self.assertEqual(payload["feed"][0]["device_ip"], "10.10.80.51")
+        self.assertEqual(payload["feed"][0]["device_name"], "First Floor OUT")
         self.assertEqual(payload["feed"][1]["employee"], "Sarah Martinez")
         self.assertEqual(payload["feed"][1]["action"], "punch-in")
         self.assertEqual(payload["feed"][2]["employee"], "James Anderson")

@@ -149,7 +149,9 @@ Response:
       "action": "punch-in",
       "time": "2026-05-19T12:06:00+05:30",
       "device_employee_no": "101",
-      "frappe_employee_id": "EMP-101"
+      "frappe_employee_id": "EMP-101",
+      "device_ip": "10.10.80.50",
+      "device_name": "First Floor IN"
     },
     {
       "id": "18451",
