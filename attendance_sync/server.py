@@ -726,10 +726,17 @@ def _frappe_attendance_payload(
             logger.warning("Could not load Frappe Employee details: %s", exc)
             frappe_error = frappe_error or str(exc)
 
+    late_label, late_threshold_minutes = _late_threshold_minutes(settings.LATE_AFTER_TIME)
+
     rows: list[dict[str, Any]] = []
     for doc in docs:
         employee_id = str(doc.get("employee") or "").strip()
         details = details_by_id.get(employee_id, {})
+        in_time = doc.get("in_time")
+        punch_in_minutes = _time_to_minutes(str(in_time or ""))
+        late_by_minutes = 0
+        if punch_in_minutes is not None:
+            late_by_minutes = max(0, punch_in_minutes - late_threshold_minutes)
         rows.append(
             {
                 "name": doc.get("name"),
@@ -739,7 +746,7 @@ def _frappe_attendance_payload(
                 "status": doc.get("status"),
                 "half_day_status": doc.get("half_day_status") or "",
                 "working_hours": doc.get("working_hours"),
-                "in_time": doc.get("in_time"),
+                "in_time": in_time,
                 "out_time": doc.get("out_time"),
                 "department": doc.get("department") or details.get("department") or "",
                 "designation": details.get("designation") or "",
@@ -747,6 +754,7 @@ def _frappe_attendance_payload(
                 "company": details.get("company") or "",
                 "shift": doc.get("shift") or "",
                 "late_entry": bool(doc.get("late_entry")),
+                "late_by_minutes": late_by_minutes,
                 "early_exit": bool(doc.get("early_exit")),
                 "leave_type": doc.get("leave_type") or "",
                 "employee_status": details.get("status") or "",
@@ -773,6 +781,7 @@ def _frappe_attendance_payload(
             "present": present,
             "absent": absent,
             "on_leave": on_leave,
+            "late_after": late_label,
             "frappe_error": frappe_error,
         },
         "page": page,
