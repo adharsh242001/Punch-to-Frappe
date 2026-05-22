@@ -27,9 +27,8 @@ _os.chdir(_os.path.dirname(_os.path.abspath(__file__)))
 sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
 
 from config import settings
-from config.settings import ENV_FILE
 from config.env_file import read_env, update_env
-from hrms.frappe_client import FrappeAPIError, FrappeClient
+from hrms.frappe_client import FrappeClient
 from processors.event_processor import EventProcessor
 from processors.live_attendance import build_live_attendance, live_calendar_today
 from processors.punch_selection import select_daily_punches
@@ -54,7 +53,7 @@ _wake_event = threading.Event()
 _DASHBOARD_HTML_PATH = Path(__file__).resolve().parent / "dashboard.html"
 _OPENAPI_JSON_PATH = Path(__file__).resolve().parent / "openapi.json"
 _SWAGGER_HTML_PATH = Path(__file__).resolve().parent / "swagger.html"
-_ENV_PATH = ENV_FILE
+_ENV_PATH = Path(__file__).resolve().parent.parent / ".env"
 _last_push_lock = threading.Lock()
 _last_push: dict[str, Any] = {
     "started_at": None,
@@ -626,172 +625,6 @@ def _hr_verification_rows(
     return rows, summary
 
 
-def _ui_status_from_frappe(status: str, half_day_status: str = "") -> str:
-    """Match Frappe Monthly Attendance Sheet status keys (frontend frappe-attendance.js)."""
-    main = str(status or "").strip()
-    other_half = str(half_day_status or "").strip()
-    if main == "Half Day":
-        if other_half == "Absent":
-            return "half-day-absent"
-        return "half-day-present"
-    if main == "Present":
-        return "present"
-    if main == "Absent":
-        return "absent"
-    if main == "On Leave":
-        return "on-leave"
-    if main == "Work From Home":
-        return "work-from-home"
-    if main == "Holiday":
-        return "holiday"
-    if main == "Weekly Off":
-        return "weekly-off"
-    return "absent"
-
-
-def _filter_frappe_attendance_rows(
-    rows: list[dict[str, Any]],
-    *,
-    search: str,
-    department: str,
-    status: str,
-) -> list[dict[str, Any]]:
-    search_text = search.lower().strip()
-    filtered = rows
-
-    if department and department.lower() != "all":
-        filtered = [
-            row for row in filtered
-            if str(row.get("department") or "").strip() == department
-        ]
-
-    if status and status.lower() != "all":
-        ui_status = status.lower().strip()
-        filtered = [
-            row for row in filtered
-            if _ui_status_from_frappe(row.get("status"), row.get("half_day_status")) == ui_status
-        ]
-
-    if search_text:
-        filtered = [
-            row for row in filtered
-            if search_text in " ".join(
-                str(part)
-                for part in [
-                    row.get("employee"),
-                    row.get("employee_name"),
-                    row.get("department"),
-                    row.get("designation"),
-                    row.get("attendance_date"),
-                    row.get("status"),
-                ]
-            ).lower()
-        ]
-
-    return filtered
-
-
-def _frappe_attendance_payload(
-    frappe: FrappeClient,
-    *,
-    date_from: str,
-    date_to: str,
-    search: str,
-    department: str,
-    status: str,
-    employee: str,
-    page: int,
-    page_size: int,
-) -> dict[str, Any]:
-    frappe_error = None
-    docs: list[dict[str, Any]] = []
-    try:
-        docs = frappe.list_attendance(
-            date_from=date_from,
-            date_to=date_to,
-            employee=employee,
-        )
-    except FrappeAPIError as exc:
-        logger.warning("Could not load Frappe Attendance: %s", exc)
-        frappe_error = str(exc)
-
-    employee_ids = sorted(
-        {str(doc.get("employee") or "").strip() for doc in docs if str(doc.get("employee") or "").strip()}
-    )
-    details_by_id: dict[str, dict[str, Any]] = {}
-    if employee_ids and not frappe_error:
-        try:
-            details_by_id = frappe.get_employees(employee_ids)
-        except FrappeAPIError as exc:
-            logger.warning("Could not load Frappe Employee details: %s", exc)
-            frappe_error = frappe_error or str(exc)
-
-    late_label, late_threshold_minutes = _late_threshold_minutes(settings.LATE_AFTER_TIME)
-
-    rows: list[dict[str, Any]] = []
-    for doc in docs:
-        employee_id = str(doc.get("employee") or "").strip()
-        details = details_by_id.get(employee_id, {})
-        in_time = doc.get("in_time")
-        punch_in_minutes = _time_to_minutes(str(in_time or ""))
-        late_by_minutes = 0
-        if punch_in_minutes is not None:
-            late_by_minutes = max(0, punch_in_minutes - late_threshold_minutes)
-        rows.append(
-            {
-                "name": doc.get("name"),
-                "employee": employee_id,
-                "employee_name": doc.get("employee_name") or details.get("employee_name") or employee_id,
-                "attendance_date": doc.get("attendance_date"),
-                "status": doc.get("status"),
-                "half_day_status": doc.get("half_day_status") or "",
-                "working_hours": doc.get("working_hours"),
-                "in_time": in_time,
-                "out_time": doc.get("out_time"),
-                "department": doc.get("department") or details.get("department") or "",
-                "designation": details.get("designation") or "",
-                "branch": details.get("branch") or "",
-                "company": details.get("company") or "",
-                "shift": doc.get("shift") or "",
-                "late_entry": bool(doc.get("late_entry")),
-                "late_by_minutes": late_by_minutes,
-                "early_exit": bool(doc.get("early_exit")),
-                "leave_type": doc.get("leave_type") or "",
-                "employee_status": details.get("status") or "",
-            }
-        )
-
-    filtered_rows = _filter_frappe_attendance_rows(
-        rows,
-        search=search,
-        department=department,
-        status=status,
-    )
-    total = len(filtered_rows)
-    start = (page - 1) * page_size
-    end = start + page_size
-    present = sum(1 for row in filtered_rows if str(row.get("status") or "") == "Present")
-    absent = sum(1 for row in filtered_rows if str(row.get("status") or "") == "Absent")
-    on_leave = sum(1 for row in filtered_rows if str(row.get("status") or "") == "On Leave")
-
-    return {
-        "rows": filtered_rows[start:end],
-        "summary": {
-            "total": total,
-            "present": present,
-            "absent": absent,
-            "on_leave": on_leave,
-            "late_after": late_label,
-            "frappe_error": frappe_error,
-        },
-        "page": page,
-        "page_size": page_size,
-        "total": total,
-        "has_next": end < total,
-        "has_prev": page > 1,
-    }
-
-
 def process_pending_events(store: Any, processor: EventProcessor) -> dict[str, Any]:
     """Drain queued inbound events and run retry queue. Thread-safe."""
     with _push_lock:
@@ -964,35 +797,6 @@ class EventIngestHandler(BaseHTTPRequestHandler):
                     "has_next": end < total,
                     "has_prev": page > 1,
                 },
-            )
-            return
-        if path == "/api/frappe-attendance":
-            page = _int_query(query, "page", 1, 1, 100000)
-            page_size = _int_query(query, "page_size", 100, 10, 1000)
-            search = (query.get("search") or [""])[0].strip()
-            date_from = (query.get("from") or [""])[0].strip()
-            date_to = (query.get("to") or [""])[0].strip()
-            department = (query.get("department") or [""])[0].strip()
-            status = (query.get("status") or [""])[0].strip()
-            employee = (query.get("employee") or [""])[0].strip()
-            if not date_from or not date_to:
-                today = live_calendar_today()
-                date_from = date_from or today
-                date_to = date_to or today
-            _json_response(
-                self,
-                200,
-                _frappe_attendance_payload(
-                    self.frappe,
-                    date_from=date_from,
-                    date_to=date_to,
-                    search=search,
-                    department=department,
-                    status=status,
-                    employee=employee,
-                    page=page,
-                    page_size=page_size,
-                ),
             )
             return
         if path == "/api/hr-verification":

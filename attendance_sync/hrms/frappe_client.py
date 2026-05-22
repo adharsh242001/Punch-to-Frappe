@@ -29,25 +29,6 @@ class FrappeClient:
 
     _ENDPOINT = "/api/resource/Employee Checkin"
     _EMPLOYEE_ENDPOINT = "/api/resource/Employee"
-    _ATTENDANCE_ENDPOINT = "/api/resource/Attendance"
-    _RESOURCE_PAGE_SIZE = 500
-    _ATTENDANCE_FIELDS = [
-        "name",
-        "employee",
-        "employee_name",
-        "attendance_date",
-        "status",
-        "working_hours",
-        "in_time",
-        "out_time",
-        "department",
-        "company",
-        "shift",
-        "late_entry",
-        "early_exit",
-        "leave_type",
-        "half_day_status",
-    ]
 
     def __init__(
         self,
@@ -124,80 +105,6 @@ class FrappeClient:
                 if name:
                     employees[name] = row
         return employees
-
-    def list_attendance(
-        self,
-        *,
-        date_from: str = "",
-        date_to: str = "",
-        employee: str = "",
-    ) -> list[dict[str, Any]]:
-        """Return submitted Frappe HRMS Attendance documents for a date range."""
-        filters: list[list[Any]] = [["Attendance", "docstatus", "=", 1]]
-        if date_from and date_to:
-            filters.append(["Attendance", "attendance_date", "between", [date_from, date_to]])
-        elif date_from:
-            filters.append(["Attendance", "attendance_date", ">=", date_from])
-        elif date_to:
-            filters.append(["Attendance", "attendance_date", "<=", date_to])
-        if employee:
-            filters.append(["Attendance", "employee", "=", employee])
-
-        return self._list_resource(
-            self._ATTENDANCE_ENDPOINT,
-            filters=filters,
-            fields=self._ATTENDANCE_FIELDS,
-            order_by="attendance_date desc, modified desc",
-        )
-
-    def _list_resource(
-        self,
-        endpoint: str,
-        *,
-        filters: list[list[Any]],
-        fields: list[str],
-        order_by: str,
-    ) -> list[dict[str, Any]]:
-        rows: list[dict[str, Any]] = []
-        limit_start = 0
-        max_rows = 10000
-
-        while limit_start < max_rows:
-            params = {
-                "fields": json.dumps(fields),
-                "filters": json.dumps(filters),
-                "limit_page_length": self._RESOURCE_PAGE_SIZE,
-                "limit_start": limit_start,
-                "order_by": order_by,
-            }
-            try:
-                resp = self._session.get(
-                    f"{self._base_url}{endpoint}",
-                    params=params,
-                    timeout=self._timeout,
-                )
-                resp.raise_for_status()
-            except requests.exceptions.HTTPError as exc:
-                status = exc.response.status_code
-                body = exc.response.text[:500]
-                raise FrappeAPIError(
-                    f"HTTP {status} from Frappe: {body}", status_code=status, body=body
-                ) from exc
-            except requests.exceptions.ConnectionError as exc:
-                raise FrappeAPIError(f"Connection error: {exc}") from exc
-            except requests.exceptions.Timeout as exc:
-                raise FrappeAPIError("Request timed out") from exc
-
-            try:
-                batch = resp.json().get("data") or []
-            except ValueError:
-                batch = []
-            rows.extend(batch)
-            if len(batch) < self._RESOURCE_PAGE_SIZE:
-                break
-            limit_start += self._RESOURCE_PAGE_SIZE
-
-        return rows
 
     def push_checkin(
         self,
