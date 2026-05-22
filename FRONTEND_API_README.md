@@ -299,6 +299,70 @@ Response:
 }
 ```
 
+## Frappe HRMS Attendance
+
+### `GET /api/frappe-attendance`
+
+Reads **submitted Attendance documents** directly from Frappe HRMS (`/api/resource/Attendance`). Use this for dashboard tables, exports, analytics, and employee history.
+
+Query params:
+
+| Param | Default | Notes |
+| --- | --- | --- |
+| `page` | `1` | 1-based page number |
+| `page_size` | `100` | Min 10, max 1000 |
+| `search` | empty | Employee ID, name, department, date, status |
+| `from` | today | Date filter `YYYY-MM-DD` |
+| `to` | today | Date filter `YYYY-MM-DD` |
+| `department` | empty | Exact department name |
+| `status` | empty | UI filter: `present`, `late`, `absent`, `remote`, `on-leave` |
+| `employee` | empty | Frappe Employee ID |
+
+Response row fields (from Frappe Attendance):
+
+| Field | Frappe source |
+| --- | --- |
+| `employee` | Employee ID |
+| `employee_name` | Employee Name |
+| `attendance_date` | Date |
+| `in_time` | Punch in |
+| `out_time` | Punch out |
+| `working_hours` | Working Hours |
+| `status` | Present / Absent / On Leave / Half Day / Work From Home |
+
+Example:
+
+```text
+GET /api/frappe-attendance?from=2026-05-01&to=2026-05-19&page=1&page_size=100
+```
+
+```json
+{
+  "rows": [
+    {
+      "name": "HR-ATT-2026-00042",
+      "employee": "337",
+      "employee_name": "Shabnam",
+      "attendance_date": "2026-05-19",
+      "status": "Present",
+      "working_hours": 8.5,
+      "in_time": "2026-05-19T09:15:00+05:30",
+      "out_time": "2026-05-19T18:00:00+05:30",
+      "department": "Content - CA",
+      "late_entry": false
+    }
+  ],
+  "summary": { "total": 1, "present": 1, "absent": 0, "on_leave": 0, "frappe_error": null },
+  "page": 1,
+  "page_size": 100,
+  "total": 1,
+  "has_next": false,
+  "has_prev": false
+}
+```
+
+Requires `HRMS_URL`, `HRMS_API_KEY`, and `HRMS_API_SECRET` on the Punch-to-Frappe server.
+
 ## HR Verification
 
 ### `GET /api/hr-verification`
