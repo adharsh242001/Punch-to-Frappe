@@ -626,16 +626,26 @@ def _hr_verification_rows(
     return rows, summary
 
 
-def _ui_status_from_frappe(status: str, late_entry: Any) -> str:
-    normalized = str(status or "").strip()
-    if normalized == "On Leave":
-        return "on-leave"
-    if normalized == "Absent":
-        return "absent"
-    if normalized in {"Present", "Half Day", "Work From Home"} and bool(late_entry):
-        return "late"
-    if normalized in {"Present", "Half Day", "Work From Home"}:
+def _ui_status_from_frappe(status: str, half_day_status: str = "") -> str:
+    """Match Frappe Monthly Attendance Sheet status keys (frontend frappe-attendance.js)."""
+    main = str(status or "").strip()
+    other_half = str(half_day_status or "").strip()
+    if main == "Half Day":
+        if other_half == "Absent":
+            return "half-day-absent"
+        return "half-day-present"
+    if main == "Present":
         return "present"
+    if main == "Absent":
+        return "absent"
+    if main == "On Leave":
+        return "on-leave"
+    if main == "Work From Home":
+        return "work-from-home"
+    if main == "Holiday":
+        return "holiday"
+    if main == "Weekly Off":
+        return "weekly-off"
     return "absent"
 
 
@@ -659,8 +669,7 @@ def _filter_frappe_attendance_rows(
         ui_status = status.lower().strip()
         filtered = [
             row for row in filtered
-            if _ui_status_from_frappe(row.get("status"), row.get("late_entry")) == ui_status
-            or (ui_status == "remote" and str(row.get("status") or "") == "Work From Home")
+            if _ui_status_from_frappe(row.get("status"), row.get("half_day_status")) == ui_status
         ]
 
     if search_text:
@@ -728,6 +737,7 @@ def _frappe_attendance_payload(
                 "employee_name": doc.get("employee_name") or details.get("employee_name") or employee_id,
                 "attendance_date": doc.get("attendance_date"),
                 "status": doc.get("status"),
+                "half_day_status": doc.get("half_day_status") or "",
                 "working_hours": doc.get("working_hours"),
                 "in_time": doc.get("in_time"),
                 "out_time": doc.get("out_time"),

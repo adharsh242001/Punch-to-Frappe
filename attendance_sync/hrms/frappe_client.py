@@ -46,6 +46,7 @@ class FrappeClient:
         "late_entry",
         "early_exit",
         "leave_type",
+        "half_day_status",
     ]
 
     def __init__(
