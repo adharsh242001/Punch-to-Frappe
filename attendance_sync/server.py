@@ -27,6 +27,7 @@ _os.chdir(_os.path.dirname(_os.path.abspath(__file__)))
 sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
 
 from config import settings
+from config.settings import ENV_FILE
 from config.env_file import read_env, update_env
 from hrms.frappe_client import FrappeAPIError, FrappeClient
 from processors.event_processor import EventProcessor
@@ -53,7 +54,7 @@ _wake_event = threading.Event()
 _DASHBOARD_HTML_PATH = Path(__file__).resolve().parent / "dashboard.html"
 _OPENAPI_JSON_PATH = Path(__file__).resolve().parent / "openapi.json"
 _SWAGGER_HTML_PATH = Path(__file__).resolve().parent / "swagger.html"
-_ENV_PATH = Path(__file__).resolve().parent.parent / ".env"
+_ENV_PATH = ENV_FILE
 _last_push_lock = threading.Lock()
 _last_push: dict[str, Any] = {
     "started_at": None,

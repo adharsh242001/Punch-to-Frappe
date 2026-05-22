@@ -32,10 +32,9 @@ services:
       # Writable so the dashboard Employee Map tab can persist mapping edits.
       # Must be writable by uid 10001 inside the container.
       - ./employee_map.json:/app/employee_map.json
-      # Mount .env.server as /app/.env so the dashboard "Configuration" tab can
-      # persist edits back to the host file. Restart the container to apply.
-      # Must be writable by uid 10001 inside the container.
-      - ./.env.server:/app/.env
+      # Mount .env.server so the dashboard "Configuration" tab can persist edits.
+      # Restart the container to apply. Must be writable by uid 10001 in the container.
+      - ./.env.server:/app/.env.server
       # Optional: allows the dashboard to restart this container after saving
       # employee_map.json when EMPLOYEE_MAP_RESTART_COMMAND is configured.
       # This gives the app Docker control of the host; keep the env command

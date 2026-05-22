@@ -28,7 +28,7 @@ import os
 
 PAGE_SIZE = 50
 ROOT = Path(__file__).resolve().parent
-load_dotenv(ROOT / ".env")
+load_dotenv(ROOT / ".env.server")
 
 
 def normalize_id(emp_id: str) -> str:

@@ -1,5 +1,5 @@
 """
-Central configuration loaded from environment variables (.env file).
+Central configuration loaded from environment variables (.env.server file).
 All values have sensible defaults; required values raise on missing.
 """
 import json
@@ -9,9 +9,10 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-# Load .env from the project root (two levels up from this file)
-_ROOT = Path(__file__).resolve().parents[2]
-load_dotenv(_ROOT / ".env")
+# Project root (Punch-to-Frappe/) — two levels up from attendance_sync/config/
+ROOT_DIR = Path(__file__).resolve().parents[2]
+ENV_FILE = ROOT_DIR / ".env.server"
+load_dotenv(ENV_FILE)
 
 
 def _require(name: str) -> str:
@@ -26,7 +27,7 @@ def _root_relative_path(value: str) -> Path:
     path = Path(value)
     if path.is_absolute():
         return path
-    return _ROOT / path
+    return ROOT_DIR / path
 
 
 # ── Hikvision devices ────────────────────────────────────────────────────────
