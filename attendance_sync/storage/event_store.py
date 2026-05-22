@@ -525,7 +525,12 @@ class EventStore:
         )
         return [dict(row) for row in cur.fetchall()]
 
-    def recent_frappe_push_logs(self, limit: int = 100) -> list[dict[str, Any]]:
+    def frappe_push_logs(self, page: int = 1, page_size: int = 100) -> dict[str, Any]:
+        total_row = self._conn().execute(
+            "SELECT COUNT(*) AS count FROM frappe_push_log"
+        ).fetchone()
+        total = int(total_row["count"]) if total_row else 0
+        offset = (page - 1) * page_size
         cur = self._conn().execute(
             """
             SELECT id, attempted_at, serial_no, employee_no, hrms_id, event_time,
@@ -533,9 +538,9 @@ class EventStore:
                    response_body, error
             FROM frappe_push_log
             ORDER BY id DESC
-            LIMIT ?
+            LIMIT ? OFFSET ?
             """,
-            (limit,),
+            (page_size, offset),
         )
         out = []
         for row in cur.fetchall():
@@ -545,7 +550,17 @@ class EventStore:
             except Exception:
                 pass
             out.append(item)
-        return out
+        return {
+            "logs": out,
+            "page": page,
+            "page_size": page_size,
+            "total": total,
+            "has_next": offset + page_size < total,
+            "has_prev": page > 1,
+        }
+
+    def recent_frappe_push_logs(self, limit: int = 100) -> list[dict[str, Any]]:
+        return self.frappe_push_logs(page=1, page_size=limit)["logs"]
 
     def get_retry_queue(self, limit: int = 50) -> list[dict[str, Any]]:
         cur = self._conn().execute(

@@ -504,7 +504,8 @@ Query params:
 
 | Param | Default | Notes |
 | --- | --- | --- |
-| `limit` | `100` | Min 10, max 500 |
+| `page` | `1` | 1-based page number |
+| `page_size` | `100` | Min 10, max 500 |
 
 Response:
 
@@ -533,7 +534,12 @@ Response:
       "response_body": "",
       "error": ""
     }
-  ]
+  ],
+  "page": 1,
+  "page_size": 100,
+  "total": 1,
+  "has_next": false,
+  "has_prev": false
 }
 ```
 

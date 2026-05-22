@@ -440,13 +440,23 @@
           <h2>Frappe Push Logs</h2>
           <div class="subtle">Every attempted Employee Checkin push, including payload, result, Frappe response, and errors.</div>
         </div>
-        <button class="secondary" onclick="loadFrappePushLogs()">Refresh Logs</button>
+        <div class="actions">
+          <select id="pushLogsPageSize" onchange="resetFrappePushLogsPageAndLoad()" style="width:110px"><option>50</option><option selected>100</option><option>250</option><option>500</option></select>
+          <button class="secondary" onclick="loadFrappePushLogs()">Refresh Logs</button>
+        </div>
       </div>
       <div class="table-scroll">
         <table>
           <thead><tr><th>Attempted</th><th>Result</th><th>Employee</th><th>Time</th><th>Device</th><th>Type</th><th>Serial</th><th>Payload / Response</th></tr></thead>
           <tbody id="pushLogsBody"></tbody>
         </table>
+      </div>
+      <div class="topbar" style="margin-top:12px">
+        <div id="pushLogsPageInfo" class="subtle">Page not loaded</div>
+        <div class="actions">
+          <button id="pushLogsPrev" class="secondary" onclick="changeFrappePushLogsPage(-1)">Previous</button>
+          <button id="pushLogsNext" class="secondary" onclick="changeFrappePushLogsPage(1)">Next</button>
+        </div>
       </div>
     </div>
   </section>
@@ -590,6 +600,7 @@ let hrVerifySummary = {};
 let hrVerifyReloadTimer = null;
 let serverLateAfter = "09:30";
 let frappePushLogs = [];
+let pushLogsMeta = { page: 1, page_size: 100, total: 0, has_next: false, has_prev: false };
 
 const cfgKeys = [
   "HRMS_URL", "HRMS_API_KEY", "HRMS_API_SECRET", "POLL_INTERVAL", "DEDUP_WINDOW",
@@ -645,13 +656,20 @@ async function refreshAll() {
       api("/api/events"),
       api("/api/processed"),
       api("/api/retries"),
-      api("/api/frappe-push-logs")
+      api("/api/frappe-push-logs?page=1&page_size=100")
     ]);
     renderStatus(status);
     renderAlerts(alerts.alerts || []);
     renderEvents(events.events || []);
     renderProcessed(processed.processed || []);
     renderRetries(retries.retries || []);
+    pushLogsMeta = {
+      page: pushLogs.page || 1,
+      page_size: pushLogs.page_size || 100,
+      total: pushLogs.total || 0,
+      has_next: Boolean(pushLogs.has_next),
+      has_prev: Boolean(pushLogs.has_prev)
+    };
     renderFrappePushLogs(pushLogs.logs || []);
     await loadAttendanceOverview();
     $("refreshLine").textContent = "Refreshed " + new Date().toLocaleTimeString();
@@ -840,8 +858,22 @@ function renderProcessed(rows) {
   </tr>`).join("") : `<tr><td colspan="5" class="subtle">No processed records</td></tr>`;
 }
 
-async function loadFrappePushLogs() {
-  const data = await api("/api/frappe-push-logs?limit=200");
+function pushLogsQuery(page=pushLogsMeta.page) {
+  const params = new URLSearchParams();
+  params.set("page", String(page));
+  params.set("page_size", $("pushLogsPageSize")?.value || String(pushLogsMeta.page_size || 100));
+  return params;
+}
+
+async function loadFrappePushLogs(page=pushLogsMeta.page) {
+  const data = await api("/api/frappe-push-logs?" + pushLogsQuery(page).toString());
+  pushLogsMeta = {
+    page: data.page || page,
+    page_size: data.page_size || Number($("pushLogsPageSize")?.value || 100),
+    total: data.total || 0,
+    has_next: Boolean(data.has_next),
+    has_prev: Boolean(data.has_prev)
+  };
   renderFrappePushLogs(data.logs || []);
 }
 
@@ -863,6 +895,22 @@ function renderFrappePushLogs(rows) {
       <td><details><summary>payload / response</summary><pre class="mono">${esc(payload)}${response ? "\n\n" + esc(response) : ""}</pre></details></td>
     </tr>`;
   }).join("") : `<tr><td colspan="8" class="subtle">No Frappe push attempts logged yet</td></tr>`;
+  if ($("pushLogsPageInfo")) {
+    const totalPages = Math.max(1, Math.ceil((pushLogsMeta.total || 0) / (pushLogsMeta.page_size || 100)));
+    $("pushLogsPageInfo").textContent = `${pushLogsMeta.total || 0} log row(s) · page ${pushLogsMeta.page || 1} of ${totalPages}`;
+    $("pushLogsPrev").disabled = !pushLogsMeta.has_prev;
+    $("pushLogsNext").disabled = !pushLogsMeta.has_next;
+  }
+}
+
+function resetFrappePushLogsPageAndLoad() {
+  pushLogsMeta.page = 1;
+  loadFrappePushLogs(1).catch(err => toast("Frappe logs load failed: " + err.message, true));
+}
+
+function changeFrappePushLogsPage(delta) {
+  const nextPage = Math.max(1, (pushLogsMeta.page || 1) + delta);
+  loadFrappePushLogs(nextPage).catch(err => toast("Frappe logs load failed: " + err.message, true));
 }
 
 function renderRetries(rows) {

@@ -516,8 +516,9 @@
         "tags": ["Frappe"],
         "summary": "Recent Frappe push attempt logs",
         "parameters": [
+          { "$ref": "#/components/parameters/page" },
           {
-            "name": "limit",
+            "name": "page_size",
             "in": "query",
             "schema": { "type": "integer", "minimum": 10, "maximum": 500, "default": 100 }
           }
@@ -528,13 +529,18 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "logs": {
-                      "type": "array",
-                      "items": { "$ref": "#/components/schemas/PushLog" }
+                  "allOf": [
+                    { "$ref": "#/components/schemas/Pagination" },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "logs": {
+                          "type": "array",
+                          "items": { "$ref": "#/components/schemas/PushLog" }
+                        }
+                      }
                     }
-                  }
+                  ]
                 }
               }
             }
