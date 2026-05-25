@@ -65,8 +65,12 @@ services:
       NODE_ENV: production
       PORT: "3000"
       HOSTNAME: 0.0.0.0
+      DATABASE_URL: postgresql://punch_sync:${POSTGRES_PASSWORD:-change_this_postgres_password}@postgres:5432/punch_sync
     expose:
       - "3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
     extra_hosts:
       # Kept for backward compatibility with .env.local that may reference
       # host.docker.internal:8090. Inside this compose you can also point
