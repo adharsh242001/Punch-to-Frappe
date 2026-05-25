@@ -8,7 +8,7 @@ Usage
 -----
     python main.py
 
-Environment variables are loaded from .env.server (see .env.example).
+Environment variables are loaded from .env (see .env.example).
 """
 import logging
 import signal
