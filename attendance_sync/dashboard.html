@@ -104,6 +104,42 @@
   .stat-label { color: var(--muted); font-size: 12px; text-transform: uppercase; }
   .stat-value { font-size: 28px; line-height: 1.2; font-weight: 700; margin-top: 4px; }
   .stat-note { color: var(--muted); margin-top: 4px; min-height: 18px; }
+  .graph-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .chart-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
+  .chart-title { font-weight: 650; }
+  .chart-total { color: var(--muted); font-size: 12px; }
+  .bar-list { display: grid; gap: 9px; }
+  .bar-row { display: grid; grid-template-columns: minmax(92px, .7fr) minmax(0, 2fr) 56px; gap: 10px; align-items: center; }
+  .bar-label { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .bar-track { height: 10px; background: var(--surface-2); border-radius: 999px; overflow: hidden; }
+  .bar-fill { height: 100%; min-width: 2px; border-radius: 999px; }
+  .bar-value { text-align: right; font-variant-numeric: tabular-nums; }
+  .chart-empty { color: var(--muted); padding: 16px 0; }
+  .donut-wrap { display: grid; grid-template-columns: 138px minmax(0, 1fr); gap: 14px; align-items: center; }
+  .donut {
+    width: 138px;
+    aspect-ratio: 1;
+    border-radius: 50%;
+    background: conic-gradient(var(--surface-2) 0deg 360deg);
+    display: grid;
+    place-items: center;
+    position: relative;
+  }
+  .donut::after {
+    content: "";
+    position: absolute;
+    inset: 24px;
+    border-radius: 50%;
+    background: var(--surface);
+    border: 1px solid var(--line);
+  }
+  .donut-number { position: relative; z-index: 1; font-weight: 700; font-size: 22px; }
+  .legend { display: grid; gap: 8px; }
+  .legend-row { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
+  .legend-label { display: inline-flex; align-items: center; gap: 7px; color: var(--muted); }
+  .swatch { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+  .sparkline { width: 100%; height: 162px; display: block; }
+  .spark-axis { color: var(--muted); fill: var(--muted); font-size: 11px; }
 
   table { width: 100%; border-collapse: collapse; table-layout: fixed; }
   th, td {
@@ -186,13 +222,14 @@
 
   @media (max-width: 1020px) {
     .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    .two, .cards { grid-template-columns: 1fr; }
+    .two, .cards, .graph-grid { grid-template-columns: 1fr; }
   }
   @media (max-width: 640px) {
     .wrap { padding: 14px; }
     .topbar { align-items: flex-start; flex-direction: column; }
     .stats { grid-template-columns: 1fr; }
     .inline-fields { grid-template-columns: 1fr; }
+    .donut-wrap { grid-template-columns: 1fr; }
   }
 </style>
 </head>
@@ -255,6 +292,37 @@
           <div class="subtle">Automatic server-to-Frappe pushing is stopped. The server stores punches in the queue until you manually push them.</div>
         </div>
         <button onclick="pushNow()">Manual Push to Frappe</button>
+      </div>
+    </div>
+
+    <div class="grid graph-grid" style="margin-top:14px">
+      <div class="card">
+        <div class="chart-head">
+          <div class="chart-title">Queue State</div>
+          <div id="queueChartTotal" class="chart-total">-</div>
+        </div>
+        <div id="queueChart"></div>
+      </div>
+      <div class="card">
+        <div class="chart-head">
+          <div class="chart-title">Daily Punch Volume</div>
+          <div id="dailyChartTotal" class="chart-total">-</div>
+        </div>
+        <div id="dailyChart"></div>
+      </div>
+      <div class="card">
+        <div class="chart-head">
+          <div class="chart-title">Edge Node Volume</div>
+          <div id="edgeChartTotal" class="chart-total">-</div>
+        </div>
+        <div id="edgeChart"></div>
+      </div>
+      <div class="card">
+        <div class="chart-head">
+          <div class="chart-title">Recent Frappe Push Results</div>
+          <div id="pushChartTotal" class="chart-total">-</div>
+        </div>
+        <div id="pushChart"></div>
       </div>
     </div>
 
@@ -601,6 +669,11 @@ let hrVerifyReloadTimer = null;
 let serverLateAfter = "09:30";
 let frappePushLogs = [];
 let pushLogsMeta = { page: 1, page_size: 100, total: 0, has_next: false, has_prev: false };
+let dashboardStatus = null;
+let dashboardAlerts = [];
+let dashboardEvents = [];
+let dashboardProcessed = [];
+let dashboardRetries = [];
 
 const cfgKeys = [
   "HRMS_URL", "HRMS_API_KEY", "HRMS_API_SECRET", "POLL_INTERVAL", "DEDUP_WINDOW",
@@ -626,6 +699,137 @@ function toast(message, error=false) {
   el.classList.add("show");
   clearTimeout(toast.timer);
   toast.timer = setTimeout(() => el.classList.remove("show"), 3600);
+}
+
+const chartColors = ["#146c94", "#16803c", "#d09100", "#b42318", "#667085", "#5b6ee1", "#087b7a"];
+function toNumber(value) {
+  const n = Number(value || 0);
+  return Number.isFinite(n) ? n : 0;
+}
+function renderBars(targetId, rows, emptyText="No data yet") {
+  const target = $(targetId);
+  if (!target) return;
+  const cleanRows = rows.filter(row => toNumber(row.value) > 0);
+  if (!cleanRows.length) {
+    target.innerHTML = `<div class="chart-empty">${esc(emptyText)}</div>`;
+    return;
+  }
+  const max = Math.max(...cleanRows.map(row => toNumber(row.value)), 1);
+  target.innerHTML = `<div class="bar-list">${cleanRows.map((row, index) => {
+    const value = toNumber(row.value);
+    const pct = Math.max(2, Math.round((value / max) * 100));
+    const color = row.color || chartColors[index % chartColors.length];
+    return `<div class="bar-row">
+      <div class="bar-label" title="${esc(row.label)}">${esc(row.label)}</div>
+      <div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:${esc(color)}"></div></div>
+      <div class="bar-value">${esc(value)}</div>
+    </div>`;
+  }).join("")}</div>`;
+}
+function renderDonut(targetId, rows, emptyText="No data yet") {
+  const target = $(targetId);
+  if (!target) return;
+  const cleanRows = rows.filter(row => toNumber(row.value) > 0);
+  const total = cleanRows.reduce((sum, row) => sum + toNumber(row.value), 0);
+  if (!total) {
+    target.innerHTML = `<div class="chart-empty">${esc(emptyText)}</div>`;
+    return;
+  }
+  let start = 0;
+  const segments = cleanRows.map((row, index) => {
+    const value = toNumber(row.value);
+    const end = start + (value / total) * 360;
+    const color = row.color || chartColors[index % chartColors.length];
+    const segment = `${color} ${start.toFixed(2)}deg ${end.toFixed(2)}deg`;
+    start = end;
+    return segment;
+  }).join(", ");
+  target.innerHTML = `<div class="donut-wrap">
+    <div class="donut" style="background:conic-gradient(${segments})"><div class="donut-number">${esc(total)}</div></div>
+    <div class="legend">${cleanRows.map((row, index) => {
+      const value = toNumber(row.value);
+      const color = row.color || chartColors[index % chartColors.length];
+      return `<div class="legend-row">
+        <span class="legend-label"><span class="swatch" style="background:${esc(color)}"></span>${esc(row.label)}</span>
+        <strong>${esc(value)}</strong>
+      </div>`;
+    }).join("")}</div>
+  </div>`;
+}
+function renderSparkline(targetId, rows, emptyText="No attendance overview yet") {
+  const target = $(targetId);
+  if (!target) return;
+  const cleanRows = rows.filter(row => toNumber(row.value) > 0);
+  if (!cleanRows.length) {
+    target.innerHTML = `<div class="chart-empty">${esc(emptyText)}</div>`;
+    return;
+  }
+  const width = 640;
+  const height = 162;
+  const pad = 22;
+  const max = Math.max(...cleanRows.map(row => toNumber(row.value)), 1);
+  const step = cleanRows.length === 1 ? 0 : (width - pad * 2) / (cleanRows.length - 1);
+  const points = cleanRows.map((row, index) => {
+    const x = cleanRows.length === 1 ? width / 2 : pad + index * step;
+    const y = height - pad - (toNumber(row.value) / max) * (height - pad * 2);
+    return { x, y, row };
+  });
+  const line = points.map(point => `${point.x.toFixed(1)},${point.y.toFixed(1)}`).join(" ");
+  const area = `${pad},${height - pad} ${line} ${width - pad},${height - pad}`;
+  target.innerHTML = `<svg class="sparkline" viewBox="0 0 ${width} ${height}" role="img" aria-label="Daily punch volume chart" preserveAspectRatio="none">
+    <polyline points="${area}" fill="rgba(20,108,148,.10)" stroke="none"></polyline>
+    <polyline points="${line}" fill="none" stroke="#146c94" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"></polyline>
+    ${points.map(point => `<circle cx="${point.x.toFixed(1)}" cy="${point.y.toFixed(1)}" r="4" fill="#146c94"><title>${esc(point.row.label)}: ${esc(point.row.value)}</title></circle>`).join("")}
+    <text x="${pad}" y="${height - 5}" class="spark-axis">${esc(cleanRows[0].label)}</text>
+    <text x="${width - pad}" y="${height - 5}" text-anchor="end" class="spark-axis">${esc(cleanRows[cleanRows.length - 1].label)}</text>
+    <text x="${pad}" y="14" class="spark-axis">max ${esc(max)}</text>
+  </svg>`;
+}
+function renderDashboardGraphs() {
+  if (!dashboardStatus) return;
+  const counts = dashboardStatus.counts || {};
+  const pending = toNumber(counts.pending);
+  const done = toNumber(counts.done);
+  const retry = toNumber(counts.retry_queue);
+  const processedTotal = toNumber(counts.processed_total);
+  $("queueChartTotal").textContent = `${pending} pending · ${processedTotal} accepted`;
+  renderDonut("queueChart", [
+    { label: "Pending", value: pending, color: "#d09100" },
+    { label: "Handled", value: done, color: "#146c94" },
+    { label: "Retry", value: retry, color: "#b42318" },
+  ], "No queue data yet");
+
+  const daily = new Map();
+  for (const row of attendanceOverviewRows || []) {
+    const key = row.date || "unknown";
+    daily.set(key, (daily.get(key) || 0) + toNumber(row.punch_count));
+  }
+  const dailyRows = Array.from(daily.entries())
+    .sort(([a], [b]) => a.localeCompare(b))
+    .slice(-14)
+    .map(([label, value]) => ({ label, value }));
+  $("dailyChartTotal").textContent = `${dailyRows.reduce((sum, row) => sum + row.value, 0)} punches visible`;
+  renderSparkline("dailyChart", dailyRows);
+
+  const edgeRows = (dashboardStatus.nodes || []).map(node => ({
+    label: node.node_id || "(unknown)",
+    value: toNumber(node.total_inserted) + toNumber(node.total_skipped),
+  })).sort((a, b) => b.value - a.value);
+  $("edgeChartTotal").textContent = `${edgeRows.reduce((sum, row) => sum + row.value, 0)} accepted`;
+  renderBars("edgeChart", edgeRows, "No edge node batches yet");
+
+  const pushCounts = {};
+  for (const row of frappePushLogs || []) {
+    const key = row.result || "unknown";
+    pushCounts[key] = (pushCounts[key] || 0) + 1;
+  }
+  const pushRows = Object.entries(pushCounts).map(([label, value]) => ({
+    label,
+    value,
+    color: label === "success" || label === "duplicate" ? "#16803c" : label.includes("error") || label === "failed" ? "#b42318" : "#d09100",
+  })).sort((a, b) => b.value - a.value);
+  $("pushChartTotal").textContent = `${frappePushLogs.length || 0} recent log rows`;
+  renderBars("pushChart", pushRows, "No Frappe push attempts logged yet");
 }
 async function api(path, options) {
   const res = await fetch(path, options);
@@ -658,11 +862,16 @@ async function refreshAll() {
       api("/api/retries"),
       api("/api/frappe-push-logs?page=1&page_size=100")
     ]);
+    dashboardStatus = status;
+    dashboardAlerts = alerts.alerts || [];
+    dashboardEvents = events.events || [];
+    dashboardProcessed = processed.processed || [];
+    dashboardRetries = retries.retries || [];
     renderStatus(status);
-    renderAlerts(alerts.alerts || []);
-    renderEvents(events.events || []);
-    renderProcessed(processed.processed || []);
-    renderRetries(retries.retries || []);
+    renderAlerts(dashboardAlerts);
+    renderEvents(dashboardEvents);
+    renderProcessed(dashboardProcessed);
+    renderRetries(dashboardRetries);
     pushLogsMeta = {
       page: pushLogs.page || 1,
       page_size: pushLogs.page_size || 100,
@@ -672,6 +881,7 @@ async function refreshAll() {
     };
     renderFrappePushLogs(pushLogs.logs || []);
     await loadAttendanceOverview();
+    renderDashboardGraphs();
     $("refreshLine").textContent = "Refreshed " + new Date().toLocaleTimeString();
   } catch (err) {
     toast("Dashboard refresh failed: " + err.message, true);
@@ -742,6 +952,7 @@ function renderStatus(s) {
   }
   for (const node of seen.values()) rows.push(renderNodeRow(node));
   $("nodesBody").innerHTML = rows.length ? rows.join("") : `<tr><td colspan="6" class="subtle">No nodes configured</td></tr>`;
+  renderDashboardGraphs();
 }
 
 function nodeState(lastSeen) {
@@ -901,6 +1112,7 @@ function renderFrappePushLogs(rows) {
     $("pushLogsPrev").disabled = !pushLogsMeta.has_prev;
     $("pushLogsNext").disabled = !pushLogsMeta.has_next;
   }
+  renderDashboardGraphs();
 }
 
 function resetFrappePushLogsPageAndLoad() {
@@ -932,6 +1144,7 @@ function renderAttendanceOverview(rows) {
     <td>${esc((r.source_nodes || []).join(", "))}<br><span class="subtle">${esc((r.devices || []).join(", "))}</span></td>
   </tr>`).join("") : `<tr><td colspan="6" class="subtle">No attendance overview yet</td></tr>`;
   renderFirstLastPage();
+  renderDashboardGraphs();
 }
 
 function punchCell(time, result) {
