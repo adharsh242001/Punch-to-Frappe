@@ -627,6 +627,14 @@
         <div class="field"><label>Postgres DSN <span id="hint-POSTGRES_DSN" class="subtle"></span></label><input id="cfg-POSTGRES_DSN" type="password" placeholder="leave blank to keep current" /></div>
       </div>
       <div class="card">
+        <h2>Uptime Monitor</h2>
+        <div class="field"><label>Enabled</label><select id="cfg-NODE_UPTIME_MONITOR_ENABLED"><option value="false">false</option><option value="true">true</option></select></div>
+        <div class="field"><label>Threshold Hours</label><input id="cfg-NODE_UPTIME_THRESHOLD_HOURS" placeholder="8" /></div>
+        <div class="field"><label>Check Interval Seconds</label><input id="cfg-NODE_UPTIME_CHECK_INTERVAL_SECONDS" placeholder="300" /></div>
+        <div class="field"><label>Notify On Recovery</label><select id="cfg-NODE_UPTIME_NOTIFY_ON_RECOVERY"><option value="true">true</option><option value="false">false</option></select></div>
+        <div class="field"><label>Slack Webhook <span id="hint-SLACK_WEBHOOK_URL" class="subtle"></span></label><input id="cfg-SLACK_WEBHOOK_URL" type="password" placeholder="leave blank to keep current" /></div>
+      </div>
+      <div class="card">
         <h2>Edge Nodes</h2>
         <div class="table-scroll">
           <table>
@@ -679,7 +687,8 @@ const cfgKeys = [
   "HRMS_URL", "HRMS_API_KEY", "HRMS_API_SECRET", "POLL_INTERVAL", "DEDUP_WINDOW",
   "LOG_LEVEL", "SERVER_HOST", "SERVER_PORT", "STORAGE_BACKEND", "POSTGRES_DSN",
   "DEFAULT_LOG_TYPE", "LATE_AFTER_TIME", "FRAPPE_AUTO_PUSH_ENABLED", "FRAPPE_AUTO_PUSH_TIME", "FRAPPE_AUTO_PUSH_TIMEZONE",
-  "EMPLOYEE_MAP_RESTART_COMMAND"
+  "NODE_UPTIME_MONITOR_ENABLED", "NODE_UPTIME_THRESHOLD_HOURS", "NODE_UPTIME_CHECK_INTERVAL_SECONDS",
+  "NODE_UPTIME_NOTIFY_ON_RECOVERY", "SLACK_WEBHOOK_URL", "EMPLOYEE_MAP_RESTART_COMMAND"
 ];
 
 function $(id) { return document.getElementById(id); }

@@ -109,6 +109,23 @@ FRAPPE_AUTO_PUSH_ENABLED: bool = os.getenv("FRAPPE_AUTO_PUSH_ENABLED", "false").
 FRAPPE_AUTO_PUSH_TIME: str = os.getenv("FRAPPE_AUTO_PUSH_TIME", "22:00")
 FRAPPE_AUTO_PUSH_TIMEZONE: str = os.getenv("FRAPPE_AUTO_PUSH_TIMEZONE", "")
 
+# ── Edge node uptime monitor ─────────────────────────────────────────────────
+NODE_UPTIME_MONITOR_ENABLED: bool = os.getenv("NODE_UPTIME_MONITOR_ENABLED", "false").lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+NODE_UPTIME_THRESHOLD_HOURS: float = float(os.getenv("NODE_UPTIME_THRESHOLD_HOURS", "8"))
+NODE_UPTIME_CHECK_INTERVAL_SECONDS: int = int(os.getenv("NODE_UPTIME_CHECK_INTERVAL_SECONDS", "300"))
+NODE_UPTIME_NOTIFY_ON_RECOVERY: bool = os.getenv("NODE_UPTIME_NOTIFY_ON_RECOVERY", "true").lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+SLACK_WEBHOOK_URL: str = os.getenv("SLACK_WEBHOOK_URL", "")
+
 # Optional command run after dashboard Employee Map save. Leave empty by default;
 # enabling this usually requires Docker CLI/socket access inside the container.
 EMPLOYEE_MAP_RESTART_COMMAND: list[str] = shlex.split(

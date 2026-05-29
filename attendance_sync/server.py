@@ -19,6 +19,8 @@ from datetime import datetime, time as datetime_time, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
+from urllib import error as urlerror
+from urllib import request as urlrequest
 from urllib.parse import parse_qs, urlparse
 from zoneinfo import ZoneInfo
 
@@ -64,9 +66,16 @@ _last_push: dict[str, Any] = {
     "error": None,
     "trigger": None,
 }
+_uptime_monitor_lock = threading.Lock()
+_uptime_monitor: dict[str, Any] = {
+    "enabled": False,
+    "threshold_hours": None,
+    "checked_at": None,
+    "nodes": [],
+}
 
 # Keys treated as secrets in the config API: masked in GET, blank-on-PUT means keep.
-_SECRET_KEYS = {"HRMS_API_KEY", "HRMS_API_SECRET", "POSTGRES_DSN"}
+_SECRET_KEYS = {"HRMS_API_KEY", "HRMS_API_SECRET", "POSTGRES_DSN", "SLACK_WEBHOOK_URL"}
 
 # Whitelist of plain key/value config fields editable via the dashboard.
 _EDITABLE_KEYS = (
@@ -85,6 +94,11 @@ _EDITABLE_KEYS = (
     "FRAPPE_AUTO_PUSH_ENABLED",
     "FRAPPE_AUTO_PUSH_TIME",
     "FRAPPE_AUTO_PUSH_TIMEZONE",
+    "NODE_UPTIME_MONITOR_ENABLED",
+    "NODE_UPTIME_THRESHOLD_HOURS",
+    "NODE_UPTIME_CHECK_INTERVAL_SECONDS",
+    "NODE_UPTIME_NOTIFY_ON_RECOVERY",
+    "SLACK_WEBHOOK_URL",
     "EMPLOYEE_MAP_RESTART_COMMAND",
 )
 
@@ -455,6 +469,147 @@ def _auto_push_due(now: datetime, scheduled_time: datetime_time, last_run_date: 
     return last_run_date != today and now.time() >= scheduled_time
 
 
+def _parse_utc_datetime(value: str | None) -> datetime | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _format_duration(seconds: float) -> str:
+    total_minutes = max(0, int(seconds // 60))
+    hours, minutes = divmod(total_minutes, 60)
+    if hours and minutes:
+        return f"{hours}h {minutes}m"
+    if hours:
+        return f"{hours}h"
+    return f"{minutes}m"
+
+
+def _slack_enabled() -> bool:
+    return bool(settings.SLACK_WEBHOOK_URL.strip())
+
+
+def _send_slack_message(text: str, blocks: list[dict[str, Any]] | None = None) -> bool:
+    if not _slack_enabled():
+        logger.warning("Slack webhook is not configured; uptime alert not sent: %s", text)
+        return False
+
+    payload: dict[str, Any] = {"text": text}
+    if blocks:
+        payload["blocks"] = blocks
+    body = json.dumps(payload).encode("utf-8")
+    req = urlrequest.Request(
+        settings.SLACK_WEBHOOK_URL,
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urlrequest.urlopen(req, timeout=10) as resp:
+            if 200 <= resp.status < 300:
+                return True
+            logger.warning("Slack webhook returned HTTP %s for uptime alert.", resp.status)
+    except (urlerror.URLError, TimeoutError, OSError) as exc:
+        logger.warning("Could not send Slack uptime alert: %s", exc)
+    return False
+
+
+def _slack_uptime_blocks(title: str, fields: dict[str, str]) -> list[dict[str, Any]]:
+    return [
+        {"type": "section", "text": {"type": "mrkdwn", "text": f"*{title}*"}},
+        {
+            "type": "section",
+            "fields": [
+                {"type": "mrkdwn", "text": f"*{key}*\n{value}"}
+                for key, value in fields.items()
+            ],
+        },
+    ]
+
+
+def _check_node_uptime(
+    store: Any,
+    alert_state: dict[str, bool],
+    monitor_started_at: datetime,
+) -> dict[str, Any]:
+    now = datetime.now(timezone.utc)
+    threshold_seconds = max(60.0, settings.NODE_UPTIME_THRESHOLD_HOURS * 3600.0)
+    latest_by_node = store.latest_inbound_by_node()
+    results: list[dict[str, Any]] = []
+
+    for node_id in sorted(settings.SERVER_NODE_KEYS.keys()):
+        latest = latest_by_node.get(node_id, {})
+        last_received_at = _parse_utc_datetime(latest.get("last_received_at"))
+        comparison_time = last_received_at or monitor_started_at
+        silent_for = (now - comparison_time).total_seconds()
+        is_down = silent_for >= threshold_seconds
+        was_alerted = alert_state.get(node_id, False)
+
+        status = {
+            "node_id": node_id,
+            "ok": not is_down,
+            "last_received_at": latest.get("last_received_at"),
+            "event_count": latest.get("event_count", 0),
+            "silent_for_seconds": int(silent_for),
+            "alert_sent": was_alerted,
+        }
+        results.append(status)
+
+        if is_down and not was_alerted:
+            last_seen = last_received_at.isoformat() if last_received_at else "No punches received since monitor start"
+            text = f"Attendance edge node {node_id} may be down: no punch records for {_format_duration(silent_for)}."
+            sent = _send_slack_message(
+                text,
+                _slack_uptime_blocks(
+                    "Attendance edge node may be down",
+                    {
+                        "Node": node_id,
+                        "Silent for": _format_duration(silent_for),
+                        "Threshold": _format_duration(threshold_seconds),
+                        "Last punch received": last_seen,
+                    },
+                ),
+            )
+            alert_state[node_id] = sent or not _slack_enabled()
+            status["alert_sent"] = alert_state[node_id]
+            status["slack_sent"] = sent
+            logger.warning(text)
+            continue
+
+        if not is_down and was_alerted:
+            alert_state[node_id] = False
+            status["alert_sent"] = False
+            if settings.NODE_UPTIME_NOTIFY_ON_RECOVERY:
+                last_seen = last_received_at.isoformat() if last_received_at else "unknown"
+                text = f"Attendance edge node {node_id} is sending punch records again."
+                status["slack_recovery_sent"] = _send_slack_message(
+                    text,
+                    _slack_uptime_blocks(
+                        "Attendance edge node recovered",
+                        {
+                            "Node": node_id,
+                            "Last punch received": last_seen,
+                            "Previous silent time": _format_duration(silent_for),
+                        },
+                    ),
+                )
+                logger.info(text)
+
+    return {
+        "enabled": settings.NODE_UPTIME_MONITOR_ENABLED,
+        "threshold_hours": settings.NODE_UPTIME_THRESHOLD_HOURS,
+        "checked_at": now.isoformat(),
+        "nodes": results,
+    }
+
+
 def _schedule_timezone() -> ZoneInfo | None:
     name = str(settings.FRAPPE_AUTO_PUSH_TIMEZONE or "").strip()
     if not name:
@@ -712,6 +867,11 @@ def run_push(store: Any, processor: EventProcessor, trigger: str) -> dict[str, A
 def latest_push_snapshot() -> dict[str, Any]:
     with _last_push_lock:
         return dict(_last_push)
+
+
+def latest_uptime_monitor_snapshot() -> dict[str, Any]:
+    with _uptime_monitor_lock:
+        return dict(_uptime_monitor)
 
 
 class EventIngestHandler(BaseHTTPRequestHandler):
@@ -1081,6 +1241,7 @@ class EventIngestHandler(BaseHTTPRequestHandler):
                 "retry_queue": self.store.retry_queue_size(),
             },
             "last_push": latest_push_snapshot(),
+            "uptime_monitor": latest_uptime_monitor_snapshot(),
             "configured_nodes": sorted(settings.SERVER_NODE_KEYS.keys()),
             "nodes": _node_tracker.snapshot(),
         }
@@ -1146,13 +1307,18 @@ def main() -> None:
     auto_push_time = _parse_schedule_time(settings.FRAPPE_AUTO_PUSH_TIME)
     auto_push_tz = _schedule_timezone()
     last_auto_push_date: str | None = None
+    uptime_alert_state: dict[str, bool] = {}
+    uptime_monitor_started_at = datetime.now(timezone.utc)
+    last_uptime_check_monotonic = 0.0
     logger.info(
-        "Central sync server listening on %s:%d; dashboard at http://%s:%d/ | auto Frappe push=%s at %s (%s)",
+        "Central sync server listening on %s:%d; dashboard at http://%s:%d/ | auto Frappe push=%s at %s (%s) | uptime monitor=%s threshold=%sh",
         settings.SERVER_HOST, settings.SERVER_PORT,
         settings.SERVER_HOST, settings.SERVER_PORT,
         "enabled" if settings.FRAPPE_AUTO_PUSH_ENABLED else "disabled",
         settings.FRAPPE_AUTO_PUSH_TIME,
         settings.FRAPPE_AUTO_PUSH_TIMEZONE or "server local time",
+        "enabled" if settings.NODE_UPTIME_MONITOR_ENABLED else "disabled",
+        settings.NODE_UPTIME_THRESHOLD_HOURS,
     )
 
     try:
@@ -1163,6 +1329,13 @@ def main() -> None:
                     last_auto_push_date = now.date().isoformat()
                     logger.info("Running scheduled nightly Frappe push for %s.", last_auto_push_date)
                     run_push(store, processor, trigger="scheduled-nightly")
+            if settings.NODE_UPTIME_MONITOR_ENABLED:
+                now_monotonic = time.monotonic()
+                if now_monotonic - last_uptime_check_monotonic >= max(60, settings.NODE_UPTIME_CHECK_INTERVAL_SECONDS):
+                    last_uptime_check_monotonic = now_monotonic
+                    snapshot = _check_node_uptime(store, uptime_alert_state, uptime_monitor_started_at)
+                    with _uptime_monitor_lock:
+                        _uptime_monitor.update(snapshot)
             _wake_event.wait(timeout=30.0 if settings.FRAPPE_AUTO_PUSH_ENABLED else 1.0)
             _wake_event.clear()
     finally:

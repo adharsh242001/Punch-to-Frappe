@@ -129,6 +129,11 @@ All runtime settings are read from `.env`.
 | `FRAPPE_AUTO_PUSH_ENABLED` | `false` | When true, the central server automatically runs the Frappe push once per day. |
 | `FRAPPE_AUTO_PUSH_TIME` | `22:00` | Local server time for the daily automatic Frappe push. |
 | `FRAPPE_AUTO_PUSH_TIMEZONE` | empty | Optional IANA timezone for auto push, for example `Asia/Kolkata`. If empty, the server/container local timezone is used. |
+| `NODE_UPTIME_MONITOR_ENABLED` | `false` | When true, the central server alerts Slack if a configured edge node stops sending punch records. |
+| `NODE_UPTIME_THRESHOLD_HOURS` | `8` | Hours without received punch records before an edge node is treated as down. |
+| `NODE_UPTIME_CHECK_INTERVAL_SECONDS` | `300` | Seconds between uptime checks. |
+| `NODE_UPTIME_NOTIFY_ON_RECOVERY` | `true` | Send a Slack recovery message when a down node starts sending records again. |
+| `SLACK_WEBHOOK_URL` | empty | Slack incoming webhook URL for uptime alerts. Keep this secret. |
 | `EMPLOYEE_MAP_RESTART_COMMAND` | empty | Optional command run after saving Employee Map from the dashboard, for example `docker restart punch-sync-server`. |
 | `FIRST_RUN_LOOKBACK_HOURS` | `24` | On service startup, fetch this many previous hours. |
 | `DEDUP_WINDOW` | `30` | Ignore another punch from the same mapped employee within this many seconds. |

@@ -366,6 +366,22 @@ class EventStore:
             counts[row["status"]] = int(row["count"])
         return counts
 
+    def latest_inbound_by_node(self) -> dict[str, dict[str, Any]]:
+        cur = self._conn().execute(
+            """
+            SELECT source_node, MAX(received_at) AS last_received_at, COUNT(*) AS event_count
+            FROM inbound_events
+            GROUP BY source_node
+            """
+        )
+        return {
+            row["source_node"]: {
+                "last_received_at": row["last_received_at"],
+                "event_count": int(row["event_count"] or 0),
+            }
+            for row in cur.fetchall()
+        }
+
     def processed_count(self) -> int:
         cur = self._conn().execute("SELECT COUNT(*) AS count FROM processed_events")
         row = cur.fetchone()
