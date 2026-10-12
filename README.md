@@ -254,7 +254,7 @@ docker compose up -d
 Replace every placeholder in `.env` and `.env.punch.secrets` before startup. Keep
 non-secret editable settings in `.env.server`; do not enter secrets in the dashboard
 Configuration tab. The services refuse to start with missing or common placeholder
-credentials. Remote access is HTTPS-only at `https://attendance.codeace.org`; port
+credentials. Remote access is HTTPS-only at `https://attendance.example.com`; port
 8090 binds to `127.0.0.1` for emergency host-local access.
 
 Use the `cp "employee_map copy.json" employee_map.json` line only if `employee_map copy.json` is the correct final mapping. The central Docker server reads `employee_map.json` and mounts it into the container read-write so the dashboard can save mapping edits.
@@ -265,7 +265,7 @@ The Docker server uses PostgreSQL by default. Set the same password in `.env`
 The Docker Hub image is:
 
 ```text
-codeaceitsolutionsllp/punch-to-frappe:<release-tag-or-digest>
+exampleitsolutionsllp/punch-to-frappe:<release-tag-or-digest>
 ```
 
 After GitHub Actions pushes an immutable image, set `PUNCH_SYNC_IMAGE` to its
@@ -337,7 +337,7 @@ Invoke-RestMethod http://127.0.0.1:8090/health
 
 ### Web Dashboard
 
-Open `https://attendance.codeace.org/` in a browser. The dashboard shows:
+Open `https://attendance.example.com/` in a browser. The dashboard shows:
 
 - Pending / pushed / retry counters
 - Alert count and **Alerts** tab for punches that were not pushed, missing employee mappings, retry items, bad timestamps, and other issues needing resolution
@@ -374,7 +374,7 @@ DEVICES=10.10.10.166,10.10.10.128
 DEVICE_USER=admin
 DEVICE_PASS=your_device_password
 
-SYNC_SERVER_URL=https://attendance.codeace.org
+SYNC_SERVER_URL=https://attendance.example.com
 EDGE_NODE_ID=pc-a
 EDGE_NODE_SECRET=long_random_secret_for_a
 POLL_INTERVAL=600
@@ -388,7 +388,7 @@ DEVICES=10.10.20.50,10.10.20.51
 DEVICE_USER=admin
 DEVICE_PASS=your_device_password
 
-SYNC_SERVER_URL=https://attendance.codeace.org
+SYNC_SERVER_URL=https://attendance.example.com
 EDGE_NODE_ID=pc-b
 EDGE_NODE_SECRET=long_random_secret_for_b
 POLL_INTERVAL=600
